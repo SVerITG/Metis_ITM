@@ -1,0 +1,78 @@
+{# Identity card — shown in the Metis tab left rail.
+   Inputs: name, initial, role, interests[], news_topics[], runs #}
+<div class="metis-id-card" id="metis-identity-card">
+  <div class="metis-id-avatar">{{ initial }}</div>
+  <div class="metis-id-name">{{ name }}</div>
+  <div class="metis-id-sub">{{ role }}</div>
+  {# The interview is the PRIMARY action when nothing is declared yet, and a
+     quiet secondary one afterwards. An empty interests list is not a cosmetic
+     gap: it means the story-thread vocabulary, the News tabs and the "related to
+     my work" filter are all running on defaults. Telling someone to "click Edit
+     identity" put the hard part back on them, which is why it stayed empty. #}
+  {# EITHER list being empty is enough to offer the wizard, not both. On a fresh
+     install the library list is inherited from the install wizard's research
+     block while the news list is still empty — so an "and" condition hid the
+     button precisely when the News surface and the briefings were running on
+     defaults. #}
+  <div style="display:flex;gap:var(--m-space-2);margin-top:var(--m-space-2);flex-wrap:wrap;">
+    {% if news_interests and library_interests %}
+      <button class="btn btn--primary btn--caps" onclick="openMetisIdentityEdit()">Edit identity</button>
+      <button class="btn btn--ghost btn--caps" onclick="openMetisRename()" title="Quick rename">Rename</button>
+    {% else %}
+      <button class="btn btn--primary btn--caps" onclick="openInterestWizard()"
+              title="Metis asks you questions and works out your interests with you">
+        ✦ {% if not news_interests and not library_interests %}Set up my interests{%
+            elif not news_interests %}Set up news interests{%
+            else %}Set up library interests{% endif %}
+      </button>
+      <button class="btn btn--ghost btn--caps" onclick="openMetisIdentityEdit()">Edit identity</button>
+    {% endif %}
+  </div>
+
+  {# TWO LISTS, SHOWN SEPARATELY. They are different entities with different
+     purposes, and either may sit outside the person's actual work — following a
+     conflict in the news you will never publish on is a good reason to be on the
+     news list, and a method you intend to learn belongs on the library list long
+     before it appears in a project. Showing one merged "Interests" strip hid that
+     distinction and made the two impossible to tune independently. #}
+  <div class="metis-id-block">
+    <div class="metis-id-label" style="display:flex;justify-content:space-between;align-items:baseline;">
+      <span title="What Metis watches for and briefs you on">News interests</span>
+      {% if news_interests or library_interests %}
+        <button class="btn btn--ghost u-mono" type="button" onclick="openInterestWizard()"
+                title="Let Metis interview you and refine both lists"
+                style="padding:0;letter-spacing:0.1em;text-transform:uppercase;color:var(--m-accent);">↻ refine</button>
+      {% endif %}
+    </div>
+    <div class="metis-tag-strip">
+      {% if news_interests %}
+        {% for t in news_interests %}<span class="metis-tag">{{ t }}</span>{% endfor %}
+      {% else %}
+        <span class="metis-tag metis-tag--empty">
+          none yet — what should Metis keep an eye on?
+        </span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="metis-id-block">
+    <div class="metis-id-label"
+         title="What your literature collection and knowledge layer are built on">
+      Library interests
+    </div>
+    <div class="metis-tag-strip">
+      {% if library_interests %}
+        {% for t in library_interests %}<span class="metis-tag">{{ t }}</span>{% endfor %}
+      {% else %}
+        <span class="metis-tag metis-tag--empty">
+          none yet — what should Metis read up on?
+        </span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="metis-id-block" style="display:flex;justify-content:space-between;align-items:baseline;">
+    <div class="metis-id-label" style="margin:0;">Total runs</div>
+    <div style="font-family:var(--m-mono);font-size:var(--t-meta);color:var(--m-ink);">{{ runs }}</div>
+  </div>
+</div>

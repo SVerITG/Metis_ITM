@@ -1,0 +1,66 @@
+{% from "partials/_empty.html" import panel as empty_panel %}
+{% from "partials/_section.html" import sec_label %}
+{% if course or projects %}
+<div class="u-mb-6">
+  <h2 class="sec-label u-mb-3">
+    <span>Where you left off</span>
+    <span class="sec-label-tail">PICK UP FROM HERE</span>
+  </h2>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--m-space-4);">
+
+    {% if course %}
+    <div class="panel panel-pad panel--md">
+      <div class="u-label u-mb-2" style="letter-spacing:0.16em;text-transform:uppercase;">Course</div>
+      <div class="u-mb-2 u-title" style="font-weight:500;line-height:1.3;">{{ course.title }}</div>
+      <div class="u-row u-mb-3">
+        <div class="u-grow" style="height:3px;background:var(--m-rule-soft);border-radius:var(--m-radius-sm);overflow:hidden;">
+          <div style="height:100%;width:{{ course.progress_pct }}%;background:var(--m-accent);border-radius:2px;"></div>
+        </div>
+        <span class="u-label">{{ course.progress_pct }}%</span>
+      </div>
+      <div style="font-size:var(--t-meta);color:var(--m-text);margin-bottom:var(--m-space-1);">
+        <span style="color:var(--m-muted);">Last:</span> {{ course.current_lesson }}
+      </div>
+      <div style="font-size:var(--t-meta);color:var(--m-muted);">
+        <span>Next:</span> {{ course.next_lesson }}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if projects %}
+    <div class="u-col" style="gap:var(--m-space-3);">
+      <div class="u-label" style="letter-spacing:0.16em;text-transform:uppercase;padding-left:2px;">Recent work</div>
+      <div style="display:flex;flex-wrap:wrap;gap:var(--m-space-3);">
+        {% for p in projects %}
+        <div class="panel panel-pad panel--md" style="flex:1 1 240px;">
+          <div class="u-mb-2" style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--m-space-2);">
+            <div class="u-title" style="font-weight:500;line-height:1.3;">{{ p.title }}</div>
+            {% if p.last_activity_label %}
+            <span class="u-label u-fixed" style="white-space:nowrap;">{{ p.last_activity_label }}</span>
+            {% endif %}
+          </div>
+          {% if p.last_task %}
+          <div class="u-mono" style="letter-spacing:0.1em;color:var(--m-ok);margin-bottom:var(--m-space-1);">
+            ✓ {{ p.last_task | clip(60) }}
+          </div>
+          {% endif %}
+          {% if p.next_step %}
+          <div style="font-size:var(--t-meta);color:var(--m-text);line-height:1.55;border-left:2px solid var(--m-accent);padding-left:10px;">
+            {{ p.next_step }}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% else %}
+<div class="u-mb-6">
+  {{ sec_label("Where you left off") }}
+  {{ empty_panel("Nothing in progress yet", "Your active course and recently-worked projects will appear here once you start them.") }}
+</div>
+{% endif %}

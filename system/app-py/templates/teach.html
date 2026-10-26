@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+{% from "partials/_section.html" import sec_label %}
+{% block title %}Teach{% endblock %}
+
+{% block extra_head %}
+<style>
+.source-chip {
+  display:inline-flex;align-items:center;gap:4px;
+  font-family:var(--m-mono);font-size:11px;letter-spacing:0.1em;
+  padding:4px 10px;border:1px solid var(--m-line);border-radius:3px;
+  cursor:pointer;color:var(--m-muted);background:transparent;transition:all 100ms;
+}
+.source-chip.active { border-color:var(--m-accent);color:var(--m-accent);background:rgba(99,102,241,.07); }
+.slide-row { padding:10px 0;border-bottom:1px solid var(--m-rule-soft);display:flex;gap:10px;align-items:flex-start; }
+.slide-row:last-child { border-bottom:none; }
+.slide-num { font-family:var(--m-mono);font-size:11px;color:var(--m-muted);width:22px;padding-top:2px;flex-shrink:0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page">
+
+  <div class="page-head">
+    <div>
+      <div class="page-eyebrow">SURFACE 08 · COURSES &amp; TALKS</div>
+      <h1 class="page-title">Teach</h1>
+      <div style="font-family:var(--m-display);font-size:var(--t-body);color:var(--m-muted);margin-top:var(--m-space-2);line-height:1.5;">Drafts outward — essays, lessons and talks made from what you already know.</div>
+    </div>
+    <div class="u-row">
+      <button class="btn btn--ghost btn--caps" onclick="resetBuilder()">Reset</button>
+    </div>
+  </div>
+
+  <div class="grid" style="grid-template-columns:1.55fr 1fr;gap:var(--m-space-6);">
+
+    <!-- LEFT: Builder form / output -->
+    <div>
+
+      <!-- Builder form -->
+      <div id="teach-builder-form">
+        {{ sec_label("Course builder", tail="INTAKE") }}
+
+        <div class="panel" style="padding:var(--m-space-5) var(--m-space-5) var(--m-space-5);">
+
+          <div class="u-mb-4">
+            <label class="u-label" style="display:block;margin-bottom:var(--m-space-1);">COURSE TITLE</label>
+            <input class="u-tile" id="teach-title" type="text" autofocus
+                   placeholder="e.g. Introduction to Disease Epidemiology"
+                   style="width:100%;box-sizing:border-box;padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-body);color:var(--m-ink);" aria-label="e.g. Introduction to Disease Epidemiology">
+          </div>
+
+          <div class="u-mb-4" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--m-space-3);">
+            <div>
+              <label class="u-label" style="display:block;margin-bottom:var(--m-space-1);">AUDIENCE</label>
+              <select class="u-tile" id="teach-audience" style="width:100%;padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-small);color:var(--m-ink);">
+                <option value="expert">Expert / Specialist</option>
+                <option value="practitioner" selected>Health Practitioner</option>
+                <option value="student">Graduate Student</option>
+                <option value="public">General Public</option>
+              </select>
+            </div>
+            <div>
+              <label class="u-label" style="display:block;margin-bottom:var(--m-space-1);">DEPTH</label>
+              <select class="u-tile" id="teach-depth" style="width:100%;padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-small);color:var(--m-ink);">
+                <option value="overview" selected>Overview (8–12 slides)</option>
+                <option value="lecture">Full lecture (20–25 slides)</option>
+                <option value="workshop">Workshop (30–40 slides)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="u-mb-4">
+            <label class="u-label u-mb-2" style="display:block;">KNOWLEDGE SOURCES</label>
+            <div style="display:flex;gap:var(--m-space-2);flex-wrap:wrap;" id="teach-source-chips">
+              <button class="source-chip active" data-src="library" onclick="toggleSource(this)">Library</button>
+              <button class="source-chip active" data-src="literature" onclick="toggleSource(this)">Literature</button>
+              <button class="source-chip active" data-src="meetings" onclick="toggleSource(this)">Meetings</button>
+              <button class="source-chip" data-src="web" onclick="toggleSource(this)">Web search</button>
+            </div>
+          </div>
+
+          <div class="u-mb-4">
+            <label class="u-label u-mb-2" style="display:block;">OUTPUT FORMAT</label>
+            <div style="display:flex;gap:var(--m-space-2);" id="teach-fmt-chips">
+              <button class="source-chip active" data-fmt="pptx" onclick="toggleFormat(this)">PowerPoint (.pptx)</button>
+              <button class="source-chip" data-fmt="outline" onclick="toggleFormat(this)">Outline only</button>
+              <button class="source-chip" data-fmt="markdown" onclick="toggleFormat(this)">Markdown slides</button>
+            </div>
+          </div>
+
+          <div class="u-mb-5">
+            <label class="u-label" style="display:block;margin-bottom:var(--m-space-1);">CONTEXT / OBJECTIVES <span style="opacity:.5;">(optional)</span></label>
+            <textarea class="u-tile" id="teach-context" rows="3"
+                      placeholder="Learning objectives, required sections, key messages to include…"
+                      style="width:100%;box-sizing:border-box;padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-small);color:var(--m-ink);resize:vertical;"></textarea>
+          </div>
+
+          <div class="u-row u-row--wrap" style="gap:var(--m-space-3);">
+            <button class="btn btn--primary btn--caps" onclick="buildCourse()" id="teach-build-btn">Build Course</button>
+            <button class="btn btn--ghost btn--caps" onclick="buildOutline()">Outline First</button>
+            <span class="u-label" id="teach-build-status"></span>
+            <span class="u-label" id="teach-ai-badge" style="letter-spacing:0.08em;margin-left:auto;">TEMPLATE MODE</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Output panel (hidden until build runs) -->
+      <div class="u-hide" id="teach-output-panel">
+        <h2 class="sec-label u-mb-3">
+          <span id="teach-output-label">Build output</span>
+          <button class="btn btn--ghost btn--caps" style="font-size:var(--t-micro);padding:var(--m-space-1) var(--m-space-2);" onclick="resetBuilder()">New Build</button>
+        </h2>
+        <div id="teach-output-body" class="panel" style="padding:var(--m-space-5);min-height:300px;"></div>
+        <div class="u-hide" id="teach-download-bar" style="margin-top:var(--m-space-3);gap:var(--m-space-3);align-items:center;"></div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT: Past builds + KB stats -->
+    <div>
+
+      {{ sec_label("Past builds") }}
+      <div id="teach-past-builds"
+           hx-get="/api/partial/teach/past-builds"
+           hx-trigger="load"
+           hx-swap="outerHTML">
+        <div class="panel skeleton" style="padding:var(--m-space-5);">
+          <div class="u-mb-2" style="height:10px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);width:60%;"></div>
+          <div style="height:10px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);width:80%;"></div>
+        </div>
+      </div>
+
+      {{ sec_label("Knowledge base", style="margin-top:var(--m-space-5);") }}
+      <div hx-get="/api/partial/teach/kb-stats"
+           hx-trigger="load"
+           hx-swap="outerHTML">
+        <div class="panel panel-pad skeleton" style=";">
+          <div class="u-mb-2" style="height:10px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);width:70%;"></div>
+          <div style="height:10px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);width:50%;"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  {#- FULL WIDTH, out of the side rail (2026-09-02). The gap analysis used to
+      sit in the 1fr column beside the intake form. When it was a stub that was
+      fine; now it carries a scored three-band breakdown for nine courses and
+      runs about 1,300px, so the form's column ended a third of the way down and
+      the rest of the page was one narrow rail beside dead space.
+
+      A panel's home should follow its weight. This one is now the substantial
+      thing on the surface, so it gets the width — and its own rows breathe
+      instead of wrapping in a half column. -#}
+  {{ sec_label("Where your teaching has gaps", tail="SCORED AGAINST YOUR CORPUS",
+               style="margin-top:var(--m-space-6);") }}
+  <div hx-get="/api/partial/teach/gap-analysis"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="panel panel-pad skeleton">
+      <p class="u-ed" style="font-size:var(--t-small);margin:0;">Reading the archive…</p>
+    </div>
+  </div>
+
+  {{ sec_label("Question bank", style="margin-top:var(--m-space-6);") }}
+  <div hx-get="/api/partial/teach/qbank"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="panel panel-pad skeleton">
+      <p class="u-ed" style="font-size:var(--t-small);margin:0;">Pulling reusable assessment items…</p>
+    </div>
+  </div>
+</div>
+
+<script>
+let _activeFmt = 'pptx';
+let _activeSrcs = new Set(['library','literature','meetings']);
+window._anthropicKeySet = false;
+
+fetch('/api/teach/status').then(r => r.json()).then(d => {
+  window._anthropicKeySet = d.ai_available;
+  const badge = document.getElementById('teach-ai-badge');
+  if (badge) {
+    badge.textContent = d.ai_available ? 'AI ENABLED' : 'TEMPLATE MODE';
+    badge.style.color = d.ai_available ? 'var(--m-accent)' : 'var(--m-muted)';
+  }
+}).catch(() => {});
+
+function toggleSource(btn) {
+  const s = btn.dataset.src;
+  if (_activeSrcs.has(s)) { _activeSrcs.delete(s); btn.classList.remove('active'); }
+  else { _activeSrcs.add(s); btn.classList.add('active'); }
+}
+
+function toggleFormat(btn) {
+  document.querySelectorAll('[data-fmt]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _activeFmt = btn.dataset.fmt;
+}
+
+function buildCourse()  { _submit('full'); }
+function buildOutline() { _submit('outline'); }
+
+function _submit(mode) {
+  const title = document.getElementById('teach-title').value.trim();
+  if (!title) { document.getElementById('teach-title').focus(); return; }
+
+  const btn  = document.getElementById('teach-build-btn');
+  const stat = document.getElementById('teach-build-status');
+  btn.disabled = true;
+  stat.textContent = window._anthropicKeySet ? 'Generating with AI…' : 'Building from templates…';
+
+  const fd = new FormData();
+  fd.append('title',    title);
+  fd.append('audience', document.getElementById('teach-audience').value);
+  fd.append('depth',    document.getElementById('teach-depth').value);
+  fd.append('context',  document.getElementById('teach-context').value.trim());
+  fd.append('sources',  JSON.stringify([..._activeSrcs]));
+  fd.append('format',   mode === 'outline' ? 'outline' : _activeFmt);
+
+  fetch('/api/teach/build', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      btn.disabled = false; stat.textContent = '';
+      _showOutput(data, title);
+      htmx.ajax('GET', '/api/partial/teach/past-builds', { target: '#teach-past-builds', swap: 'outerHTML' });
+    })
+    .catch(() => { btn.disabled = false; stat.textContent = 'Something went wrong building that — try again, or check the Metis tab for details.'; });
+}
+
+function _showOutput(data, title) {
+  document.getElementById('teach-builder-form').style.display = 'none';
+  const panel = document.getElementById('teach-output-panel');
+  panel.style.display = 'block';
+  document.getElementById('teach-output-label').textContent = title;
+  document.getElementById('teach-output-body').innerHTML =
+    data.html || '<em style="color:var(--m-muted);">The build didn\'t produce anything yet — adjust your selections and try again.</em>';
+
+  const aiChip = data.ai_generated
+    ? `<span class="u-mono" id="teach-mode-chip" style="letter-spacing:0.08em;padding:var(--m-space-1) var(--m-space-2);background:var(--m-accent);color:var(--m-on-accent);border-radius:var(--m-radius-sm);margin-left:8px;">AI</span>`
+    : `<span class="u-label" id="teach-mode-chip" style="letter-spacing:0.08em;padding:var(--m-space-1) var(--m-space-2);border:1px solid var(--m-line);border-radius:var(--m-radius-sm);margin-left:8px;">TEMPLATE</span>`;
+  const oldChip = document.getElementById('teach-mode-chip');
+  if (oldChip) oldChip.remove();
+  document.getElementById('teach-output-label').insertAdjacentHTML('afterend', aiChip);
+
+  const dlBar = document.getElementById('teach-download-bar');
+  if (data.pptx_path) {
+    dlBar.style.display = 'flex';
+    dlBar.innerHTML = `
+      <a href="/api/teach/download?path=${encodeURIComponent(data.pptx_path)}"
+         class="btn btn--primary btn--caps" download>Download .pptx</a>
+      <button class="btn btn--ghost btn--caps" onclick="copyOutline()">Copy Text</button>`;
+  } else {
+    dlBar.style.display = 'none';
+  }
+}
+
+function resetBuilder() {
+  document.getElementById('teach-builder-form').style.display = 'block';
+  document.getElementById('teach-output-panel').style.display = 'none';
+}
+
+function copyOutline() {
+  navigator.clipboard.writeText(document.getElementById('teach-output-body').innerText)
+    .then(() => { const b = event.target; b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy Text', 1500); });
+}
+</script>
+{% endblock %}

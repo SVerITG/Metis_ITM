@@ -1,0 +1,13 @@
+<!-- work_project_notes.html — Project notes panel (loaded on demand) -->
+<div class="u-rule-t" id="proj-notes-panel-{{ project_id }}"
+     style="padding-top:12px;margin-top:var(--m-space-1);">
+  <div class="u-label u-row u-row--between u-mb-2" style="letter-spacing:0.16em;">
+    <span>PROJECT NOTES</span>
+    <span style="font-size:var(--t-micro);color:var(--m-ok);" id="notes-saved-{{ project_id }}"></span>
+  </div>
+  <textarea class="u-tile" id="notes-area-{{ project_id }}"
+            rows="5"
+            placeholder="Jot ideas, links, decisions for this project…"
+            onblur="saveProjectNotes('{{ project_id }}')"
+            style="width:100%;box-sizing:border-box;font-family:var(--m-display);font-size:var(--t-meta);line-height:1.6;padding:var(--m-space-2) var(--m-space-3);color:var(--m-ink);resize:vertical;">{{ notes }}</textarea>
+</div>

@@ -1,0 +1,39 @@
+{# Consent ledger — Archive design system #}
+{% set CLASS_CHIP = {
+  'PUBLIC':       'chip--ok',
+  'INTERNAL':     'chip--info',
+  'CONFIDENTIAL': 'chip--warn',
+  'SENSITIVE':    'chip--alert'
+} %}
+
+{% if not events %}
+<div class="u-ed" style="padding:var(--m-space-5) var(--m-space-5);text-align:center;font-size:var(--t-small);">
+  No consent events yet — agents log events via <code class="u-mono">log_consent_event()</code>.
+</div>
+{% else %}
+<div style="padding:var(--m-space-4) var(--m-space-5);">
+  <div class="u-label" style="display:grid;grid-template-columns:120px 1fr 110px 100px;gap:var(--m-space-3);padding:var(--m-space-2) 0 var(--m-space-2);border-bottom:1px solid var(--m-rule-strong);letter-spacing:0.16em;text-transform:uppercase;">
+    <div>Time</div>
+    <div>Action</div>
+    <div>Class</div>
+    <div>Agent</div>
+  </div>
+  {% for ev in events %}
+  <div class="u-rule" style="display:grid;grid-template-columns:120px 1fr 110px 100px;gap:var(--m-space-3);padding:var(--m-space-2) 0;align-items:center;">
+    <div class="u-label">{{ ev.timestamp[:16] if ev.timestamp else '—' }}</div>
+    <div class="u-truncate" style="font-family:var(--m-ui);font-size:var(--t-meta);color:var(--m-ink);" title="{{ ev.action }}">
+      {{ ev.action }}
+      {% if ev.notes %}<span style="color:var(--m-muted);font-style:italic;"> · {{ ev.notes }}</span>{% endif %}
+    </div>
+    <div>
+      <span class="chip {{ CLASS_CHIP.get(ev.data_classification, 'chip--mute') }}" style="font-size:var(--t-micro);">
+        {{ ev.data_classification or '—' }}
+      </span>
+    </div>
+    <div class="u-label u-truncate">
+      {{ ev.agent_slug or '—' }}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

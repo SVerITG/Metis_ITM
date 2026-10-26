@@ -1,0 +1,34 @@
+{# today_overnight.html — Archive (replaces Bootstrap overnight-count card)
+   Three ledger cells: NEWS · IDEAS · MEETINGS (overnight counts).
+   Context vars: news, ideas, meetings — ints (last 24h)
+#}
+
+{% set total = (news or 0) + (ideas or 0) + (meetings or 0) %}
+
+{% if total == 0 %}
+  <div class="ledger-cell">
+    <div class="ledger-n tnum" style="color:var(--m-muted);">—</div>
+    <div class="ledger-l">NEWS</div>
+  </div>
+  <div class="ledger-cell">
+    <div class="ledger-n tnum" style="color:var(--m-muted);">—</div>
+    <div class="ledger-l">IDEAS</div>
+  </div>
+  <div class="ledger-cell">
+    <div class="ledger-n tnum" style="color:var(--m-muted);">—</div>
+    <div class="ledger-l">MEETINGS</div>
+  </div>
+{% else %}
+  <div class="ledger-cell">
+    <div class="ledger-n tnum">{{ news or 0 }}</div>
+    <div class="ledger-l">{% if news == 1 %}NEWS ITEM{% else %}NEWS{% endif %}</div>
+  </div>
+  <div class="ledger-cell">
+    <div class="ledger-n tnum">{{ ideas or 0 }}</div>
+    <div class="ledger-l">{% if ideas == 1 %}IDEA{% else %}IDEAS{% endif %}</div>
+  </div>
+  <div class="ledger-cell">
+    <div class="ledger-n tnum">{{ meetings or 0 }}</div>
+    <div class="ledger-l">{% if meetings == 1 %}MEETING{% else %}MEETINGS{% endif %}</div>
+  </div>
+{% endif %}

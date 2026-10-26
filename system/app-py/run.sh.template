@@ -1,0 +1,5 @@
+#!/bin/bash
+# Superseded: the dashboard launcher is now tracked as run-dashboard.sh, which
+# derives every path itself. A copy of this file saved as run.sh simply hands
+# over to it, so an old setup that copies the template keeps working.
+exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-dashboard.sh" "$@"

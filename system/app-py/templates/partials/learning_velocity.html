@@ -1,0 +1,130 @@
+{# partials/learning_velocity.html — Sparkline + streak + 3 windows #}
+<div class="panel">
+  <div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5);display:flex;align-items:baseline;justify-content:space-between;gap:var(--m-space-3);">
+    <div>
+      <span class="kicker kicker--accent" style="margin:0;">VELOCITY</span>
+      <div style="font-family:var(--m-display);font-size:var(--t-small);color:var(--m-muted);margin-top:var(--m-space-1);">
+        Your learning pace, with a 14-day spark and a streak count.
+      </div>
+    </div>
+    {% if any_data %}
+    <div class="u-label u-label--accent u-fixed" style="letter-spacing:0.12em;"
+         title="{{ trend_label }}">
+      {{ trend_glyph | safe }} {{ trend_label | upper }}
+    </div>
+    {% endif %}
+  </div>
+
+  {% if not any_data %}
+  <div style="padding:var(--m-space-5) var(--m-space-5);">
+    <p class="u-title" style="line-height:1.6;margin:0 0 var(--m-space-2);">
+      Nothing tracked yet.
+    </p>
+    <p style="font-family:var(--m-display);font-size:var(--t-small);color:var(--m-muted);line-height:1.6;margin:0;">
+      Complete your first lesson on the Learning tab and I'll start showing your pace here.
+    </p>
+  </div>
+  {% else %}
+
+  {# ---- 14-day sparkline ---- #}
+  <div style="padding:var(--m-space-4) var(--m-space-5) var(--m-space-2);">
+    <div class="u-label u-mb-2">
+      LAST 14 DAYS
+    </div>
+    {#- An all-zero sparkline is a chart of nothing: 14 identical grey stubs on a
+        baseline, which takes a chart's worth of space to say "no data". Say it
+        in words instead. `any_data` is true here whenever there is a single
+        review EVER, so this window can legitimately be empty while the panel
+        below still has numbers to show. -#}
+    {% if not max_count %}
+    <p class="u-ed vel-empty">No reviews in the last 14 days.</p>
+    {% else %}
+    {% set bar_w = 16 %}
+    {% set gap = 4 %}
+    {% set chart_h = 48 %}
+    {% set total_w = 14 * bar_w + 13 * gap %}
+    {#- The explicit height is load-bearing. An <svg> with a viewBox, width:100%
+        and NO height scales proportionally: this viewBox is 276 x 62, so across
+        a ~1150px panel the element became ~258px tall — a quarter of a screen of
+        empty chart — and font-size="8" axis labels were scaled with it to ~33px,
+        which is why "TODAY" was rendered in giant letters under an empty box.
+        Pinning the height keeps the drawing 62px tall and lets
+        preserveAspectRatio="none" stretch the bars across the width, which is
+        what a sparkline wants. -#}
+    <svg viewBox="0 0 {{ total_w }} {{ chart_h + 14 }}"
+         width="100%" height="{{ chart_h + 14 }}"
+         preserveAspectRatio="none"
+         role="img" aria-label="Reviews completed on each of the last 14 days"
+         style="display:block;width:100%;height:{{ chart_h + 14 }}px;">
+      <line x1="0" y1="{{ chart_h }}" x2="{{ total_w }}" y2="{{ chart_h }}"
+            stroke="var(--m-rule-soft)" stroke-width="1"/>
+      {% for d in spark_days %}
+        {% set x = loop.index0 * (bar_w + gap) %}
+        {% if max_count > 0 and d.count > 0 %}
+          {% set h = ((d.count / max_count) * (chart_h - 4)) | round(1) %}
+          {% if h < 2 %}{% set h = 2 %}{% endif %}
+        {% else %}
+          {% set h = 0 %}
+        {% endif %}
+        {% if h > 0 %}
+        <rect x="{{ x }}" y="{{ chart_h - h }}" width="{{ bar_w }}" height="{{ h }}"
+              rx="1.5"
+              fill="var(--m-accent)"
+              opacity="{{ 0.55 + (d.count / max_count) * 0.45 if max_count else 0.6 }}">
+          <title>{{ d.date }}: {{ d.count }}</title>
+        </rect>
+        {% else %}
+        <rect x="{{ x }}" y="{{ chart_h - 2 }}" width="{{ bar_w }}" height="2"
+              fill="var(--m-surface-3)">
+          <title>{{ d.date }}: 0</title>
+        </rect>
+        {% endif %}
+      {% endfor %}
+      {# tiny axis labels: leftmost = -13d, rightmost = today #}
+      <text x="0" y="{{ chart_h + 11 }}"
+            font-family="var(--m-mono)" font-size="8" fill="var(--m-muted)"
+            letter-spacing="0.1em">-13D</text>
+      <text x="{{ total_w }}" y="{{ chart_h + 11 }}"
+            text-anchor="end"
+            font-family="var(--m-mono)" font-size="8" fill="var(--m-muted)"
+            letter-spacing="0.1em">TODAY</text>
+    </svg>
+    {% endif %}
+  </div>
+
+  {# ---- Streak ---- #}
+  <div class="u-rule-t" style="padding:var(--m-space-4) var(--m-space-5);display:flex;align-items:baseline;gap:var(--m-space-4);">
+    <div style="font-family:var(--m-display);font-size:40px;color:var(--m-accent);line-height:1;">{{ streak }}</div>
+    <div>
+      <div class="u-label" style="letter-spacing:0.18em;">
+        DAY STREAK
+      </div>
+      <div style="font-family:var(--m-display);font-size:var(--t-meta);color:var(--m-muted);margin-top:var(--m-space-1);">
+        {% if streak == 0 %}
+        Pick a lesson today to start one.
+        {% elif streak == 1 %}
+        Today counts &mdash; keep it going.
+        {% else %}
+        {{ streak }} consecutive day{% if streak != 1 %}s{% endif %} with at least one completion.
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# ---- Three windows ---- #}
+  <div class="u-rule-t" style="padding:var(--m-space-4) var(--m-space-5);display:grid;grid-template-columns:repeat(3,1fr);gap:var(--m-space-4);">
+    <div>
+      <div style="font-family:var(--m-display);font-size:var(--t-h2);color:var(--m-ink);line-height:1;">{{ d7 }}</div>
+      <div class="u-label" style="margin-top:var(--m-space-1);">THIS WEEK</div>
+    </div>
+    <div>
+      <div style="font-family:var(--m-display);font-size:var(--t-h2);color:var(--m-ink);line-height:1;">{{ d30 }}</div>
+      <div class="u-label" style="margin-top:var(--m-space-1);">THIS MONTH</div>
+    </div>
+    <div>
+      <div style="font-family:var(--m-display);font-size:var(--t-h2);color:var(--m-ink);line-height:1;">{{ d_all }}</div>
+      <div class="u-label" style="margin-top:var(--m-space-1);">ALL TIME</div>
+    </div>
+  </div>
+  {% endif %}
+</div>

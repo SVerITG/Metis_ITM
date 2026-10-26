@@ -1,0 +1,170 @@
+{#-
+  _section.html — single source of truth for page sections.
+
+  Every dashboard panel should pass through this macro. It guarantees:
+    - consistent header (eyebrow / title / tail / action)
+    - consistent spacing and typography from the design tokens
+    - one place to evolve the look of every section at once
+
+  Usage:
+    {% from "partials/_section.html" import section %}
+    {% call section(title="Morning brief", eyebrow="OPEN UP", tail="updated 2 min ago") %}
+      <div class="...">  ... content ...  </div>
+    {% endcall %}
+
+  All keyword args are optional except `title`. `padded=True` wraps the body in
+  a bordered, padded panel — set False if the content already provides its own
+  panel/styling.
+-#}
+
+{% macro section(title, eyebrow=None, tail=None, action=None, padded=True, body_class="", size="md") %}
+<section class="section">
+  <header class="section-head">
+    {% if eyebrow %}<span class="section-eyebrow">{{ eyebrow }}</span>{% endif %}
+    <h2 class="section-title{% if size == 'lg' %} section-title--lg{% elif size == 'sm' %} section-title--sm{% endif %}">{{ title }}</h2>
+    {% if tail %}<span class="section-tail">{{ tail }}</span>{% endif %}
+    {% if action %}<div class="section-action">{{ action|safe }}</div>{% endif %}
+  </header>
+  <div class="section-body{% if padded %} is-padded{% endif %}{% if body_class %} {{ body_class }}{% endif %}">
+    {{ caller() }}
+  </div>
+</section>
+{% endmacro %}
+
+
+{#-
+  sec_label — the heading style the app ACTUALLY uses (mono 11px uppercase with a
+  hairline rule), emitted as a real <h2>/<h3> instead of a <div>.
+
+  Why this exists: `section()` above renders a 20px serif `.section-title`. The ~100
+  hand-rolled headings in the app are all `.sec-label`. Migrating them to `section()`
+  would restyle every heading in the product — a redesign, not a migration. This macro
+  gives the same single-source-of-truth benefit while keeping the look byte-identical,
+  and fixes the real defect: the page had no document outline (one <h1>, zero <h2>).
+
+  `level` picks the heading rank so pages nest correctly (h2 for a page section, h3
+  for a subsection). Use `section()` when you genuinely want the serif title.
+
+  Usage:
+    {% from "partials/_section.html" import sec_label %}
+    {{ sec_label("Research threads", tail="LAST 7 DAYS") }}
+-#}
+{% macro sec_label(title, tail=None, level=2, id=None, style=None) %}
+<h{{ level }} class="sec-label"{% if id %} id="{{ id }}"{% endif %}{% if style %} style="{{ style }}"{% endif %}>
+  <span>{{ title }}</span>
+  {%- if tail %}<span class="tail">{{ tail }}</span>{% endif %}
+</h{{ level }}>
+{% endmacro %}
+
+
+{#- Skeleton placeholder — drop into a section body while HTMX is loading. -#}
+{% macro skeleton_block(rows=3, sizes=["w-90", "w-70", "w-50"]) %}
+<div class="skeleton-stack">
+  {% for s in sizes[:rows] %}
+  <div class="skeleton skeleton-bar {{ s }}"></div>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+
+{#- Skeleton box — generic loading placeholder for chart/grid areas. -#}
+{% macro skeleton_box(size="md") %}
+<div class="skeleton skeleton-box skeleton-box--{{ size }}"></div>
+{% endmacro %}
+
+
+{#-
+  zone — a group of panels folded behind one line, remembered per key.
+
+  Added 2026-08-25 after an audit found Today rendered its panels in one column
+  with no collapse anywhere: four <details> elements in the whole application.
+  Four separate panels — research threads, memory pulse, connections and the
+  memory landscape — were four renderings of one question ("what does Metis know
+  and what am I working across"). This folds them into one.
+
+  Closed by default is the point. The summary line stays visible, so folding
+  costs the reader nothing: it is the detail that hides, never the fact.
+
+  Usage:
+    {% call zone("What Metis knows", key="today-memory", tail="4 threads") %}
+      ...panels...
+    {% endcall %}
+-#}
+{#- `kind` paints the bar along the top, and it names what sort of work the zone
+    holds rather than decorating it. Five values, one meaning each:
+
+      work     — things you committed to        (olive)
+      arrived  — what came in, not yours yet    (blue)
+      waiting  — something is waiting on you    (ochre)
+      thinking — your own ideas and notes       (plum)
+      system   — what Metis knows about itself  (grey)
+
+    Omit it and no bar is drawn, which is what every existing caller gets.
+    The colours resolve per theme — see the semantic palette in styles.css, which
+    had to be completed across all five themes before this could mean anything.
+
+    `collapsible=False` gives a titled box that is always open: the same grouping
+    and the same bar, without the fold. That is what a Workstation needs.
+-#}
+{#- `tail_html` is `tail` for callers that need markup there — an hx-get span that
+    fills the summary line, say. It is rendered |safe, so a caller must pass
+    trusted template markup, never user text. When a zone can be FOLDED, the tail
+    is the only thing still on screen, so it has to be able to carry the state
+    rather than a fixed description. -#}
+{% macro zone(title, key, tail=None, open=False, kind=None, collapsible=True, tail_html=None) %}
+<section class="ui-zone{% if kind %} ui-zone--{{ kind }}{% endif %}"
+         data-zone-key="{{ key }}"{% if kind %} data-kind="{{ kind }}"{% endif %}
+         style="margin-bottom:var(--m-gap);">
+  {%- if kind %}<span class="ui-zone-bar" aria-hidden="true"></span>{% endif %}
+  {%- if collapsible %}
+  <button type="button" class="ui-zone-head"
+          aria-expanded="{{ 'true' if open else 'false' }}"
+          aria-controls="zone-{{ key }}">
+    <span class="ui-chev" aria-hidden="true">{{ '▾' if open else '▸' }}</span>
+    <span class="ui-zone-title">{{ title }}</span>
+    {%- if tail_html %}<span class="ui-zone-tail">{{ tail_html|safe }}</span>
+    {%- elif tail %}<span class="ui-zone-tail">{{ tail }}</span>{% endif %}
+  </button>
+  {%- else %}
+  {#- No button: nothing here toggles, and a control that does nothing is worse
+      than no control. -#}
+  <div class="ui-zone-head ui-zone-head--static">
+    <span class="ui-zone-title">{{ title }}</span>
+    {%- if tail %}<span class="ui-zone-tail">{{ tail }}</span>{% endif %}
+  </div>
+  {%- endif %}
+  <div class="ui-zone-body" id="zone-{{ key }}"{% if collapsible and not open %} hidden{% endif %}>
+    {{ caller() }}
+  </div>
+</section>
+{% endmacro %}
+
+
+{#-
+  tabset — choosing between views, as opposed to stacking them.
+
+  The complaint that produced this, 2026-09-13: "many different sections, but I
+  cannot click through them". Eleven of the thirteen `zone` calls in the app sit
+  on ONE surface, stacked, each folded shut — so browsing meant opening and
+  closing eleven folds in order. Stacking is right for things read together and
+  wrong for things chosen between.
+
+  Pure markup and one line of delegated JS: the panels are already in the page,
+  so switching a tab hides and shows rather than fetching. A tab whose panel is
+  expensive should instead carry hx-get and load once.
+
+  Usage:
+    {{ tabset([("changed", "What changed"), ("methods", "Methods")], key="ai") }}
+    <div class="ui-tabpane" data-tabset="ai" data-tab="changed"> ... </div>
+    <div class="ui-tabpane" data-tabset="ai" data-tab="methods" hidden> ... </div>
+-#}
+{% macro tabset(tabs, key, active=None) %}
+<div class="ui-tabs" role="tablist" data-tabset="{{ key }}">
+  {%- for tid, label in tabs %}
+  {%- set is_on = (active == tid) or (active is none and loop.first) %}
+  <button type="button" class="ui-tab" role="tab"
+          data-tabset="{{ key }}" data-tab="{{ tid }}"
+          aria-selected="{{ 'true' if is_on else 'false' }}">{{ label }}</button>
+  {%- endfor %}
+</div>
+{% endmacro %}

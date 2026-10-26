@@ -1,0 +1,210 @@
+{#- today_field_week.html — one box for "what is new in my field".
+
+    Replaces three panels, two of which read the same table. See the note above
+    `_field_week_data` in routers/today.py for the measurements.
+
+    THE DIGEST STATES ITS OWN DENOMINATOR. A week here is 1,232 unjudged items;
+    showing fourteen of them without saying so would be the "count without its
+    denominator" failure this project keeps paying for. Every group says how many
+    it is standing in front of, and links to the surface that holds the rest. -#}
+{#- THE PAGE JUMPED TO THE BOTTOM ON EVERY RATING (fixed 2026-09-17).
+    Reported: "when I rate a New paper on the Today surface, the page jumps at
+    the bottom."
+
+    Rating swaps this whole box — which is correct, because the counts, the
+    denominators and the remaining rows all change together and a per-row swap
+    would leave them disagreeing. What was wrong is what HTMX does afterwards:
+    the button that was clicked no longer exists, so focus restoration and the
+    default show behaviour take over and scroll the new content into view. On a
+    box this tall that lands you at its foot, several screens from the row you
+    just judged.
+
+    `show:none` stops the swap scrolling anything into view; `focus-scroll:false`
+    stops focus restoration doing it too. Both are needed — either alone still
+    jumps. -#}
+<div class="fw" id="today-field-week"
+     hx-target="#today-field-week"
+     hx-swap="outerHTML show:none focus-scroll:false">
+  <header class="fw-head">
+    <div>
+      <span class="fw-eyebrow">In your field</span>
+      <h3 class="fw-title">The last {{ days }} days</h3>
+    </div>
+    {#- A SHORTLIST, AND THE PILE IT CAME FROM. These are the closest few, not
+        everything above a number — a fixed floor emptied this panel completely on
+        2026-09-11 by hiding the week's best stories four thousandths below it.
+        The denominator is what makes a short list trustworthy. -#}
+    <div class="fw-tally">
+      <span class="fw-tally-cell"
+            title="The {{ shown_news }} closest to your work out of {{ n_news }} unjudged this week. Nothing is filtered away — the rest is on the News surface, in the same order."><b>{{ shown_news }}</b> news{% if n_news > shown_news %} <span class="fw-of">of {{ n_news }}</span>{% endif %}</span>
+      <span class="fw-tally-cell"
+            title="The {{ shown_papers }} closest to your work out of {{ n_papers }} unread this week. Nothing is filtered away — the rest is in your Library."><b>{{ shown_papers }}</b> papers{% if n_papers > shown_papers %} <span class="fw-of">of {{ n_papers }}</span>{% endif %}</span>
+      {#- The number that MOVES when you act. Everything else on this line is a
+          property of the pile; this one is a property of your morning. Silent at
+          zero, because "0 judged" is a reproach rather than information. -#}
+      {#- WHAT ARRIVED TODAY (2026-09-17). Every other number on this line is a
+          property of the WEEK — how many are unjudged, how many are shown. None
+          of them answered "is there anything new this morning", which is the
+          question the line is read for. Two cheap COUNTs, and silent at zero so
+          a quiet day says nothing rather than "0 news today". -#}
+      {%- if news_today or papers_today %}
+      <span class="fw-tally-cell fw-tally-new"
+            title="Arrived today and not yet judged. The counts to the left are the whole week."
+            ><b>{{ news_today }}</b> news{% if papers_today %} · <b>{{ papers_today }}</b> papers{% endif %} today</span>
+      {%- endif %}
+      {%- if judged_today %}
+      <span class="fw-tally-cell fw-tally-done"
+            title="Articles and papers you judged today — kept, declined or filed. This is the count that moves when you mark something."><b>{{ judged_today }}</b> judged today</span>
+      {%- endif %}
+      <span class="fw-tally-sep"></span>
+      <a class="fw-all" href="/news">News surface →</a>
+      <a class="fw-all" href="/knowledge">Library &rarr;</a>
+      <a class="fw-all" href="/knowledge#libpanel-categories">Categories &rarr;</a>
+    </div>
+  </header>
+
+
+  {% macro verdicts(kind, item_id) -%}
+  {#- One control set, both streams. `reading_stack` already had exactly these
+      verbs, so a news item and a paper are judged the same way.
+
+      ONLY THE IDENTITY IS SENT. The first version also posted the title, url
+      and source in every button — three buttons on fourteen rows is 42 copies
+      of long strings, and it made this box 32 KB, LARGER than the 23 KB panel
+      the merge existed to shrink. `stack.set_state` already fills those from
+      the owning table when the caller omits them, so they were never needed. -#}
+  <span class="fw-acts">
+    {#- `hx-target` and `hx-swap` are inherited from the <section>, and the
+        labels say what the buttons do, so no per-button tooltip. Together those
+        took the box from 23.4 KB to a third of it — the whole point of the
+        merge was to spend less screen and less markup on this. -#}
+    {#- FOUR VERBS. `Dismiss` was added 2026-09-05: "still my interest but I do
+        not want to read it now nor put in my stack or library."
+
+        It is deliberately NOT a synonym for either neighbour. `Not for me` says
+        the SUBJECT does not interest you and is the only verdict read as
+        evidence against showing more like it. `Dismiss` says only: not this
+        one, not today. Without it, clearing a busy morning's queue would have
+        to be spent as either a promise to read or a vote against the topic, and
+        both of those are lies the system would then act on. -#}
+    {% for state, label, tip in [
+         ('read',      'Read',       'Done with it'),
+         ('later',     'Stack',      'Read it, but not now — it joins your stack'),
+         ('dismissed', 'Dismiss',    'Clear it. Still your field, just not this one today — nothing is filed'),
+         ('declined',  'Not for me', 'The subject does not interest you — this is the only verb that changes what you are shown')] %}
+    <button type="button" class="fw-act fw-act--{{ state }}" title="{{ tip }}"
+            hx-post="/api/stack/set"
+            hx-vals='{"kind":"{{ kind }}","item_id":"{{ item_id }}","state":"{{ state }}","back":"today-field"}'>{{ label }}</button>
+    {% endfor %}
+    {#- KEEP is not a fifth verdict, it is the one action that asks a question.
+        The four above are judgements you make in a second; this one wants to
+        know WHY you are keeping it, because "why" is the only thing that makes
+        the item findable again. It loads its shelves on demand — nine rows
+        against 29 shelves would be 261 inlined options otherwise. -#}
+    <details class="fw-keep">
+      <summary class="fw-act fw-act--keep" title="Keep it in your library — and say which shelf">Keep</summary>
+      {#- `hx-target="this"` — WITHOUT IT THE KEEP BUTTON WIPED THE BOX.
+          Reported 2026-09-17: "the Keep button broke the page, I cannot see the
+          News and New papers anymore."
+
+          This div set `hx-swap="innerHTML"` but no target, so it inherited
+          `hx-target="#today-field-week"` from the box at the top of this file.
+          Opening Keep therefore loaded the shelf list into the innerHTML of the
+          WHOLE BOX, replacing every news row and every paper with a shelf
+          picker. Nothing was lost and a reload restored it, which is why it
+          reads as the page breaking rather than as a bug in a button.
+
+          A swap without a target is a swap into whatever an ancestor last
+          declared. The box declares one for the four verdict buttons, and every
+          other request inside it has to say where it goes. -#}
+      <div class="fw-keep-body"
+           hx-get="/api/partial/library/shelf-picker?kind={{ kind }}&item_id={{ item_id }}&back=today-field"
+           hx-trigger="toggle once from:closest details"
+           hx-target="this"
+           hx-swap="innerHTML">
+        <span class="fw-keep-wait">shelves…</span>
+      </div>
+    </details>
+  </span>
+  {%- endmacro %}
+
+  {%- if not news %}
+  {#- The panel rolls: judging a row brings the next one in. When the day's
+      allowance is spent the stream has to SAY so, otherwise it just vanishes
+      and reads as a bug. Shown per stream, because news and papers empty at
+      different rates. -#}
+  <div class="fw-group fw-group--done">
+    <div class="fw-group-head">
+      <span class="fw-group-name">News</span>
+      <span class="fw-group-n">no more news for today</span>
+    </div>
+  </div>
+  {%- endif %}
+
+  {% if news %}
+  <div class="fw-group">
+    <div class="fw-group-head">
+      <span class="fw-group-name">News</span>
+      <span class="fw-group-n">{{ news|length }} of {{ n_news }}{% if more_news %} · {{ more_news }} more{% endif %}</span>
+    </div>
+    {% for it in news %}
+    <article class="fw-row">
+      <span class="fw-sig fw-sig--{{ it.signal }}" title="{{ it.signal }} signal"></span>
+      <div class="fw-body">
+        <a class="fw-row-title" href="{{ it.source_url or '/news' }}"
+           {% if it.source_url %}target="_blank" rel="noopener"{% endif %}>{{ it.title | sci }}</a>
+        {% if it.summary %}<p class="fw-sum">{{ it.summary | prose(120) }}</p>{% endif %}
+        {#- THE SOURCE, which this line did not carry. It printed `domain`, and
+            on this table `domain` is a TOPIC — 'science', 'policy', 'africa',
+            'world-news' — so the line under a headline named a beat where a
+            masthead was expected. `source` is derived from the item's own URL
+            by the same helper the News surface cards use. -#}
+        <p class="fw-meta">
+          {%- if it.source %}<span class="fw-src">{{ it.source }}</span>{% endif %}
+          {%- if it.on_date %} · {{ it.on_date[:10] }}{% endif %}
+          {%- if it.domain %} · {{ it.domain }}{% endif %}
+        </p>
+      </div>
+      {{ verdicts('news', it.id) }}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {%- if not papers %}
+  <div class="fw-group fw-group--done">
+    <div class="fw-group-head">
+      <span class="fw-group-name">New papers</span>
+      <span class="fw-group-n">no new articles for today</span>
+    </div>
+  </div>
+  {%- endif %}
+
+  {% if papers %}
+  <div class="fw-group">
+    <div class="fw-group-head">
+      <span class="fw-group-name">New papers</span>
+      <span class="fw-group-n">{{ papers|length }} of {{ n_papers }}{% if more_papers %} · {{ more_papers }} more{% endif %}</span>
+    </div>
+    {% for it in papers %}
+    <article class="fw-row">
+      <span class="fw-sig fw-sig--paper" title="{{ it.lane }}"></span>
+      <div class="fw-body">
+        <a class="fw-row-title" href="{{ it.source_url or ('https://doi.org/' ~ it.doi if it.doi else '/library') }}"
+           target="_blank" rel="noopener">{{ it.title | sci }}</a>
+        {#- A paper's source is its journal, and it leads for the same reason the
+            masthead leads on a news row: it is the fastest signal of what kind
+            of thing this is. -#}
+        <p class="fw-meta">
+          {%- if it.journal %}<span class="fw-src">{{ it.journal[:40] }}</span>{% endif %}
+          {%- if it.authors %} · {{ it.authors[:52] }}{% endif %}
+          {%- if it.on_date %} · {{ it.on_date[:10] }}{% endif %}
+        </p>
+        {% if it.why %}<p class="fw-sum fw-sum--why">{{ it.why | prose(110) }}</p>{% endif %}
+      </div>
+      {{ verdicts('paper', it.id) }}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

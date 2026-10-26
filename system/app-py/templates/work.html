@@ -1,0 +1,501 @@
+{% extends "base.html" %}
+{% from "partials/_section.html" import sec_label %}
+{% block title %}Work{% endblock %}
+
+{% block content %}
+<div class="page page--wide">
+
+  <div class="page-head">
+    <div>
+      <div class="u-label u-mb-1" style="letter-spacing:0.2em;text-transform:uppercase;">SURFACE 05</div>
+      <h1 style="font-family:var(--m-display);font-size:34px;font-weight:500;letter-spacing:-0.025em;color:var(--m-ink);margin:0;">Work</h1>
+    </div>
+    <div class="page-meta"
+         hx-get="/api/partial/work/meta"
+         hx-trigger="load"
+         hx-swap="innerHTML">— PROJECTS · — TASKS · — PAUSED</div>
+  </div>
+
+  {# List / Board toggle. Planner used to be its own tab, but it queried the same
+     tasks/projects tables as Work. It is now the "Board" view here: the planning
+     horizon (week ahead · intentions · project pipeline) that the task-centric
+     List view doesn't show. One dataset, two lenses, one surface. #}
+  <div class="u-mb-5" style="display:flex;gap:var(--m-space-1);border:1px solid var(--m-rule);border-radius:6px;width:max-content;padding:var(--m-space-1);">
+    <button class="btn btn--primary u-mono" id="work-toggle-list" onclick="workSetView('list')"
+            style="letter-spacing:0.1em;text-transform:uppercase;padding:var(--m-space-1) var(--m-space-4);border:none;">List</button>
+    <button class="u-label u-label--wide btn btn--ghost" id="work-toggle-board" onclick="workSetView('board')"
+            style="padding:var(--m-space-1) var(--m-space-4);">Board</button>
+    {# Third lens: WHEN. List answers "what exists", Board answers "what stage",
+       Calendar answers "which day" — the question neither of the other two could
+       hold, because a task has no date and a due-date is a deadline not a plan. #}
+    <button class="u-label u-label--wide btn btn--ghost" id="work-toggle-calendar" onclick="workSetView('calendar')"
+            style="padding:var(--m-space-1) var(--m-space-4);">Calendar</button>
+  </div>
+
+  <!-- ══════════ CALENDAR VIEW ══════════ -->
+  <div class="u-hide" id="work-view-calendar">
+    {{ sec_label("Plan your days", tail="DRAG · WRITE · REMIND") }}
+    <div id="work-calendar"
+         hx-get="/api/partial/work/calendar?view=month"
+         hx-trigger="load"
+         hx-swap="outerHTML">
+      <div class="panel panel-pad skeleton" style="min-height:420px;"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ LIST VIEW ══════════ -->
+  <div id="work-view-list">
+
+  {# Planning horizon at the TOP — this is where the merged Planner lives now:
+     your intentions ("what you want to do") sit above your projects, so the link
+     between them is the first thing you see when you open Work. #}
+  {#- The heading sits OUTSIDE the hx-get element on purpose. HTMX replaces the
+      whole innerHTML of the element it is attached to, so a heading written into
+      the loading placeholder is deleted the moment the panel loads — it flashes
+      for one frame and is gone. That is why this panel looked untitled. -#}
+  {#- ── TASKS BY STATUS, FIRST ────────────────────────────────────────────
+      Moved here 2026-09-03 at the researcher's request — "I like the task by status,
+      why can it not be integrated on the top of the page". I had folded it away
+      a week earlier as a duplicate of the task lists further down; that was the
+      wrong call. It is the only panel that answers "what is in flight" without
+      reading anything, and its columns are now the controls that set a date.
+
+      `hx-trigger="load"` rather than `intersect once`: it is above the fold now,
+      so it must be there when the page arrives. -#}
+  {#- NOT "by status". Three of the four columns are DATE buckets — due today, due
+    this week, no date — and only "in progress" is a status. Calling the board
+    "Tasks by status" made the one control that plans a task by horizon look like
+    a workflow board that belonged on another surface. Reported 2026-09-07:
+    "the board (maybe this one has to go elsewhere)". It should stay; it just has
+    to say what it does. -#}
+{{ sec_label("When you'll do each task", tail="TODAY · THIS WEEK · IN PROGRESS · NO DATE") }}
+  <div class="u-mb-5" id="kanban-zone"
+       hx-get="/api/partial/work/kanban"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="kan-board">
+      {% for col in ['Today', 'This week', 'In progress', 'No date'] %}
+      <div class="kan-col skeleton" style="min-height:150px;">
+        <div class="kan-head"><span class="kan-name">{{ col }}</span><span class="kan-n">—</span></div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {{ sec_label("What you want to do", tail="INTENTIONS · THIS QUARTER") }}
+  <div class="u-mb-5" hx-get="/api/partial/planner/intentions"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="panel panel-pad skeleton" style="min-height:70px;"></div>
+  </div>
+
+  <!-- Due Today / Overdue strip -->
+  <div hx-get="/api/partial/work/due-today"
+       hx-trigger="load"
+       hx-swap="outerHTML"></div>
+
+  <!-- Active Projects -->
+  <h2 class="sec-label u-mb-4">
+    <span>Active Projects</span>
+    <button class="u-label" onclick="openAddProjectModal()"
+            style="margin-left:auto;background:none;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-1) var(--m-space-3);cursor:pointer;">+ Project</button>
+  </h2>
+
+  <!-- Add Project wizard modal (2 steps) -->
+  <div class="u-hide" id="add-project-overlay"
+       onclick="if(event.target===this)closeAddProjectModal()"
+       style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;align-items:center;justify-content:center;" role="button" tabindex="0">
+    <div style="background:var(--m-surface-1);border-radius:8px;padding:var(--m-space-6) var(--m-space-6);width:500px;max-width:92vw;box-shadow:0 8px 32px rgba(0,0,0,.25);">
+
+      <!-- Step indicator -->
+      <div class="u-row u-mb-5">
+        <div class="u-fixed" id="np-step-dot-1" style="width:6px;height:6px;border-radius:50%;background:var(--m-accent);"></div>
+        <div class="u-fixed" id="np-step-dot-2" style="width:6px;height:6px;border-radius:50%;background:var(--m-rule);"></div>
+        <div class="u-grow" style="font-family:var(--m-display);font-size:var(--t-h4);font-weight:500;" id="np-step-title">Add Project — Where is it?</div>
+        <button class="btn btn--ghost" onclick="closeAddProjectModal()" style="font-size:var(--t-h4);color:var(--m-muted);">✕</button>
+      </div>
+
+      <!-- ── STEP 1 ── -->
+      <div id="np-step-1">
+        <p style="font-family:var(--m-display);font-size:var(--t-small);color:var(--m-muted);margin:0 0 var(--m-space-4);line-height:1.5;">
+          Paste the full path to your project folder — copy it from your file manager's address bar (Windows Explorer, macOS Finder, or your Linux file manager).
+        </p>
+        <div class="u-col" style="gap:var(--m-space-3);">
+          <div>
+            <label class="u-label u-mb-1" style="display:block;">FOLDER PATH</label>
+            <input class="u-mono u-tile" id="np-path" type="text" placeholder="C:\Users\you\Documents\MyProject"
+                   oninput="npAutoTitle()"
+                   style="width:100%;box-sizing:border-box;padding:var(--m-space-2) var(--m-space-3);color:var(--m-ink);" aria-label="C:\Users\you\Documents\MyProject">
+            <div class="u-label" style="margin-top:var(--m-space-1);">Leave blank if this project has no folder on your computer yet.</div>
+          </div>
+          <div>
+            <label class="u-label u-mb-1" style="display:block;">PROJECT NAME *</label>
+            <input class="u-title u-tile" id="np-title" type="text" placeholder="My project name…"
+                   style="width:100%;box-sizing:border-box;padding:var(--m-space-2) var(--m-space-3);" aria-label="My project name">
+          </div>
+        </div>
+        <div style="display:flex;gap:var(--m-space-2);justify-content:flex-end;margin-top:var(--m-space-5);">
+          <button class="u-label" onclick="closeAddProjectModal()"
+                  style="background:none;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-2) var(--m-space-4);cursor:pointer;">Cancel</button>
+          <button class="btn btn--primary u-mono" onclick="npGoStep2()"
+                  style="border:none;padding:var(--m-space-2) var(--m-space-4);letter-spacing:0.06em;">Next →</button>
+        </div>
+      </div>
+
+      <!-- ── STEP 2 ── -->
+      <div class="u-hide" id="np-step-2">
+        <div class="u-col" style="gap:var(--m-space-3);">
+          <div>
+            <label class="u-label u-mb-1" style="display:block;">WHAT IS THIS PROJECT ABOUT?</label>
+            <input class="u-title u-title--sm u-tile" id="np-desc" type="text" placeholder="One sentence about the purpose…"
+                   style="width:100%;box-sizing:border-box;padding:var(--m-space-2) var(--m-space-3);" aria-label="One sentence about the purpose">
+          </div>
+          <div>
+            <label class="u-label u-mb-1" style="display:block;">MAIN TASKS (one per line, optional)</label>
+            <textarea class="u-title u-title--sm u-tile" id="np-tasks" rows="3" placeholder="Write a literature review&#10;Analyse the dataset&#10;Submit to journal"
+                      style="width:100%;box-sizing:border-box;padding:var(--m-space-2) var(--m-space-3);resize:vertical;"></textarea>
+          </div>
+          <div>
+            <label class="u-label u-mb-2" style="display:block;">HOW DO YOU OPEN THIS PROJECT?</label>
+            <div style="display:flex;flex-wrap:wrap;gap:var(--m-space-2);" id="np-launcher-btns">
+              <label class="u-row u-mono" style="cursor:pointer;">
+                <input type="radio" name="np-launcher" value="vscode" checked> VS Code
+              </label>
+              <label class="u-row u-mono" style="cursor:pointer;">
+                <input type="radio" name="np-launcher" value="rstudio"> RStudio
+              </label>
+              <label class="u-row u-mono" style="cursor:pointer;">
+                <input type="radio" name="np-launcher" value="explorer"> Just open the folder
+              </label>
+              <label class="u-row u-mono" style="cursor:pointer;">
+                <input type="radio" name="np-launcher" value="none"> No folder yet
+              </label>
+            </div>
+          </div>
+          <div>
+            <label class="u-label u-mb-1" style="display:block;">GITHUB URL (optional)</label>
+            <input class="u-mono u-tile" id="np-github" type="text" placeholder="https://github.com/…"
+                   style="width:100%;box-sizing:border-box;padding:var(--m-space-2) var(--m-space-3);color:var(--m-ink);" aria-label="https://github.com/">
+          </div>
+        </div>
+        <div style="display:flex;gap:var(--m-space-2);justify-content:flex-end;margin-top:var(--m-space-5);">
+          <button class="u-label" onclick="npGoStep1()"
+                  style="background:none;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-2) var(--m-space-4);cursor:pointer;">← Back</button>
+          <button class="btn btn--primary u-mono" onclick="submitAddProject()"
+                  style="border:none;padding:var(--m-space-2) var(--m-space-4);letter-spacing:0.06em;">Create Project</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+  <!-- Category / status filter chips -->
+  <div hx-get="/api/partial/work/category-filters"
+       hx-trigger="load"
+       hx-swap="innerHTML"></div>
+
+  <div class="u-mb-6" id="projects-zone"
+       hx-get="/api/partial/work/projects"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="grid grid-2">
+      {% for _ in range(4) %}
+      <div class="panel panel-pad skeleton" style="padding:var(--m-space-5) var(--m-space-5);min-height:120px;">
+        <div class="u-mb-3" style="height:10px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);width:60%;"></div>
+        <div class="u-mb-2" style="height:14px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);"></div>
+        <div style="height:10px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);width:80%;"></div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Workbench -->
+  <div class="panel u-row u-row--wrap u-mb-4 panel--md" style="gap:var(--m-space-3);">
+    <div class="u-label" style="letter-spacing:0.22em;text-transform:uppercase;padding-right:8px;border-right:1px solid var(--m-rule-soft);">Workbench</div>
+    <button class="btn btn--sec"
+            style="gap:var(--m-space-2);padding:var(--m-space-2) var(--m-space-3);"
+            onclick="launchProjectTarget('rc-root','claude_chat')"
+            title="Open Claude Desktop — Chat">
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M6 7c.5-1 2.5-1 2.5.5s-1.5 1.5-2 2v.5h3"/></svg>
+      <span style="font-family:var(--m-ui);font-size:var(--t-small);">Chat</span>
+      <span class="wb-dot wb-dot--on" style="margin-left:4px;"></span>
+    </button>
+    <button class="btn btn--sec"
+            style="gap:var(--m-space-2);padding:var(--m-space-2) var(--m-space-3);"
+            onclick="launchProjectTarget('rc-root','claude_cowork')"
+            title="Open Claude Desktop — Cowork (copies RC path to clipboard)">
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="7" height="7" rx="1"/><path d="M7 5V4a2 2 0 0 1 4 0v7"/><line x1="10" y1="8" x2="14" y2="8"/></svg>
+      <span style="font-family:var(--m-ui);font-size:var(--t-small);">Cowork</span>
+      <span class="wb-dot wb-dot--on" style="margin-left:4px;"></span>
+    </button>
+    <button class="btn btn--sec"
+            style="gap:var(--m-space-2);padding:var(--m-space-2) var(--m-space-3);"
+            onclick="launchProjectTarget('rc-root','claude_code')"
+            title="Open Claude Code — Terminal in Research Cortex root">
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 6 9 3 12"/><line x1="9" y1="12" x2="13" y2="12"/></svg>
+      <span style="font-family:var(--m-ui);font-size:var(--t-small);">Code</span>
+      <span class="wb-dot wb-dot--on" style="margin-left:4px;"></span>
+    </button>
+    <button class="btn btn--sec"
+            style="gap:var(--m-space-2);padding:var(--m-space-2) var(--m-space-3);"
+            onclick="launchProjectTarget('rc-root','vscode')">
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="1"/><path d="M5 6l3 2-3 2"/><line x1="9" y1="10" x2="13" y2="10"/></svg>
+      <span style="font-family:var(--m-ui);font-size:var(--t-small);">VS Code</span>
+      <span class="wb-dot wb-dot--on" style="margin-left:4px;"></span>
+    </button>
+    <button class="btn btn--sec"
+            style="gap:var(--m-space-2);padding:var(--m-space-2) var(--m-space-3);opacity:0.65;"
+            onclick="launchProjectTarget('rc-root','rstudio')">
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M6 6h2.5a1.5 1.5 0 0 1 0 3H6v3"/><line x1="9.5" y1="9" x2="12" y2="12"/></svg>
+      <span style="font-family:var(--m-ui);font-size:var(--t-small);">RStudio</span>
+      <span class="wb-dot" style="margin-left:4px;"></span>
+    </button>
+  </div>
+
+  {#- ── The same tasks, other ways to see them — FOLDED ───────────────────
+      Both sections below re-present tasks that the project cards above already
+      list. Open, they took this page to 7,459px, so the reader scrolled past
+      the same work three times: once inside its project, once by status, once
+      by priority.
+
+      They are genuinely useful lenses, so they are not removed — they are
+      closed, and `hx-trigger="intersect once"` means a closed fold never
+      fetches at all (a display:none element cannot intersect). That also takes
+      two eager `hx-trigger="load"` requests off every visit to Work.
+
+      Same fold behaviour as Today's Dispatch, via the `.m-fold*` aliases. -#}
+  <!-- All tasks — cross-project view sorted by priority -->
+  <details class="m-fold u-mb-5">
+    <summary class="m-fold-sum">
+      <span class="m-fold-lead">All open tasks</span>
+      <span class="m-fold-hint">every project at once, by priority</span>
+    </summary>
+    <div class="m-fold-body">
+  <div hx-get="/api/partial/work/all-tasks"
+       hx-trigger="intersect once"
+       hx-swap="outerHTML"
+       id="work-all-tasks">
+    <div class="panel panel-pad skeleton" style="min-height:80px;"></div>
+  </div>
+    </div>
+  </details>
+
+  </div><!-- ══════════ /LIST VIEW ══════════ -->
+
+  <!-- ══════════ BOARD VIEW (was the Planner tab) ══════════ -->
+  <div class="u-hide" id="work-view-board">
+    <!-- Week ahead -->
+    {{ sec_label("The week ahead", tail="SEVEN DAYS") }}
+    <div class="u-mb-6" hx-get="/api/partial/planner/week" hx-trigger="revealed" hx-swap="innerHTML">
+      <div class="panel panel-pad skeleton" style="min-height:120px;"></div>
+    </div>
+    {#- Intentions are NOT repeated here (removed 2026-09-03). The same panel is
+        rendered at the top of the List view, and a panel written in two places
+        drifts — this codebase has paid for that more than once. The Board view
+        is about horizons: the week ahead and the project pipeline. What you want
+        to do this quarter belongs with the work itself, one tab away. -#}
+    <!-- Project pipeline -->
+    {#- No sec_label here: partials/planner_kanban.html emits its own <h2>. A
+        second one outside the swap target would render both. Checked, not
+        assumed — of the five panels whose heading sat inside an innerHTML swap,
+        three had no heading of their own and needed this fix; two already had
+        one and did not. -#}
+    <div hx-get="/api/partial/planner/kanban" hx-trigger="revealed" hx-swap="innerHTML">
+      <div class="panel panel-pad skeleton" style="min-height:160px;"></div>
+    </div>
+  </div>
+
+  <script>
+    // ── Remember which category sections the reader opened ──────────────────
+    // The server opens a section when something in it is alive, which is the
+    // right DEFAULT and the wrong thing to enforce: someone who opens a dormant
+    // category to work in it should not find it shut on the next render. Stored
+    // per category name, and re-applied after every HTMX swap of the projects
+    // zone — the grouped partial is re-rendered by every filter, rename, merge
+    // and re-file, so a one-shot listener would work exactly once.
+    (function () {
+      var KEY = 'metis.work.cats';
+      function load() {
+        try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; }
+      }
+      function save(state) {
+        try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+      }
+      function apply() {
+        var state = load();
+        document.querySelectorAll('details.cat-sec').forEach(function (d) {
+          var name = d.dataset.cat;
+          if (name && Object.prototype.hasOwnProperty.call(state, name)) d.open = !!state[name];
+          if (d._catBound) return;
+          d._catBound = true;
+          d.addEventListener('toggle', function () {
+            var st = load();
+            st[d.dataset.cat] = d.open;
+            save(st);
+          });
+        });
+      }
+      document.addEventListener('DOMContentLoaded', apply);
+      document.body.addEventListener('htmx:afterSwap', function (e) {
+        if (e.target && e.target.id === 'projects-zone') apply();
+      });
+    })();
+
+    // Toggle between Work's task-centric List and the planning-horizon Board.
+    // Board partials use hx-trigger="revealed", so they load the first time the
+    // board is shown and not before — the List view stays instant.
+    window.workSetView = function(view){
+      var on = 'var(--m-accent)', onFg = 'var(--m-on-accent)',
+          off = 'transparent', offFg = 'var(--m-muted)';
+      var views = {list:'work-view-list', board:'work-view-board', calendar:'work-view-calendar'};
+      var btns  = {list:'work-toggle-list', board:'work-toggle-board', calendar:'work-toggle-calendar'};
+      if (!views[view]) view = 'list';
+      Object.keys(views).forEach(function(k){
+        var pane = document.getElementById(views[k]), b = document.getElementById(btns[k]);
+        var active = (k === view);
+        // TOGGLE THE CLASS, NOT THE INLINE STYLE (fixed 2026-09-03).
+        // The Board and Calendar panes are authored with `class="u-hide"`, and
+        // `u-hide` is `display:none !important`. Setting `pane.style.display=''`
+        // merely REMOVES the inline value and lets the class win again — so an
+        // inline style can never beat `!important`, and both views were
+        // unreachable from the day that class was added. Only List worked, which
+        // is exactly what the researcher reported.
+        if (pane) pane.classList.toggle('u-hide', !active);
+        if (b){ b.style.background = active ? on : off; b.style.color = active ? onFg : offFg; }
+        // Board and Calendar partials use load/revealed triggers, so process them
+        // only when first shown — the List view stays instant.
+        if (active && pane && window.htmx) window.htmx.process(pane);
+      });
+      try { localStorage.setItem('metis.work.view', view); } catch(e){}
+    };
+    // Restore the last lens. Someone who plans in the calendar should not have to
+    // re-select it on every visit.
+    try {
+      var _v = localStorage.getItem('metis.work.view');
+      if (_v && _v !== 'list') window.addEventListener('DOMContentLoaded', function(){ workSetView(_v); });
+    } catch(e){}
+
+    // ── Calendar drag & drop ────────────────────────────────────────────────
+    // THREE payload kinds now share one drop handler: a NEW project (drag from
+    // the rail), an EXISTING plan (drag a chip to another day), and — added
+    // 2026-09-03 — a TASK, which is how a piece of work gets a date by being put
+    // on a day. The kind travels in the dataTransfer so the drop target never
+    // has to guess.
+    //
+    // A project dropped on a day stays an INTENTION ("Tuesday is the data
+    // profile"), not a task. That distinction is argued in calendar_plan.py's
+    // docstring and it is right: a due date is a deadline, an intention is not.
+    // What was missing was the other direction — a task that has a deadline
+    // could not be placed on the day it falls due.
+    window.calDragProject = function(ev, pid){
+      ev.dataTransfer.setData('text/plain', JSON.stringify({t:'project', id:pid}));
+      ev.dataTransfer.effectAllowed = 'copy';
+    };
+    window.calDragPlan = function(ev, planId){
+      ev.stopPropagation();
+      ev.dataTransfer.setData('text/plain', JSON.stringify({t:'plan', id:planId}));
+      ev.dataTransfer.effectAllowed = 'move';
+    };
+    window.calDragTask = function(ev, taskId){
+      ev.stopPropagation();
+      ev.dataTransfer.setData('text/plain', JSON.stringify({t:'task', id:taskId}));
+      ev.dataTransfer.effectAllowed = 'move';
+    };
+    function _calCtx(){
+      var c = document.getElementById('work-calendar');
+      return {view: (c && c.dataset.view) || 'month', anchor: (c && c.dataset.anchor) || ''};
+    }
+    function _calPost(url, fields){
+      var c = _calCtx(), body = new URLSearchParams();
+      Object.keys(fields).forEach(function(k){ body.append(k, fields[k]); });
+      body.append('view', c.view); body.append('anchor', c.anchor);
+      fetch(url, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body})
+        .then(function(r){ return r.text(); })
+        .then(function(html){
+          var cal = document.getElementById('work-calendar');
+          if (!cal) return;
+          cal.outerHTML = html;
+          if (window.htmx) window.htmx.process(document.getElementById('work-calendar'));
+        });
+    }
+    // A RUN OF DAYS, dropped in one gesture. Until now only a free-text focus
+    // could span days (the "→ YYYY-MM-DD" suffix); a dropped PROJECT was always
+    // exactly one day, so a five-day training had to be dropped five times.
+    // Reported 2026-09-10 as "planning multi day events" not working.
+    //
+    // Hold SHIFT while dropping and it asks how many days. Plain drop stays one
+    // day, so the common case costs no extra thought — and the chip's own title
+    // says so, because a modifier nobody is told about is a feature nobody has.
+    // Click a project chip to see its own tasks, draggable onto a day. Passing an
+    // empty id closes the tray. This replaced a rail that listed every undated
+    // task in the system beside the projects — 92 chips, which pushed the
+    // calendar itself below the fold.
+    window.calProjectTasks = function(pid){
+      var tray = document.getElementById('cal-task-tray');
+      if (!tray) return;
+      if (!pid || tray.dataset.open === pid) {   // same chip again = close
+        tray.innerHTML = ''; tray.dataset.open = ''; return;
+      }
+      tray.dataset.open = pid;
+      fetch('/api/partial/work/calendar/project-tasks/' + encodeURIComponent(pid))
+        .then(function(r){ return r.ok ? r.text() : ''; })
+        .then(function(html){ tray.innerHTML = html; })
+        .catch(function(){ tray.innerHTML = ''; });
+    };
+    window.calDropDays = function(){
+      var n = window.prompt('How many days does it run for?\n\n(1 = just that day)', '1');
+      if (n === null) return null;                 // cancelled
+      n = parseInt(n, 10);
+      if (!n || n < 1) n = 1;
+      return Math.min(n, 60);
+    };
+    window.calEndDate = function(startISO, days){
+      if (!days || days < 2) return '';
+      var d = new Date(startISO + 'T00:00:00');
+      d.setDate(d.getDate() + (days - 1));
+      // toISOString would shift by the timezone offset and land a day early for
+      // anyone east of UTC. Build it from the local parts instead.
+      var p = function(x){ return (x < 10 ? '0' : '') + x; };
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+    };
+    window.calDrop = function(ev, date){
+      ev.preventDefault(); ev.stopPropagation();
+      var cell = ev.currentTarget; if (cell) cell.style.outline = 'none';
+      var raw = ev.dataTransfer.getData('text/plain'); if (!raw) return;
+      var d; try { d = JSON.parse(raw); } catch(e){ return; }
+      if (d.t === 'project') {
+        var days = 1;
+        if (ev.shiftKey) { days = window.calDropDays(); if (days === null) return; }
+        _calPost('/api/plan/create', {start_date:date, kind:'project',
+                                      project_id:d.id,
+                                      end_date: window.calEndDate(date, days)});
+      }
+      else if (d.t === 'plan') _calPost('/api/plan/' + d.id + '/move', {start_date:date});
+      else if (d.t === 'task') _calPost('/api/plan/task-date', {task_id:d.id, start_date:date});
+    };
+    // Click a day to write a focus. A leading "!" makes it a reminder; "→ YYYY-MM-DD"
+    // at the end makes it span to that date, so a multi-day focus needs no second UI.
+    window.calAddFocus = function(ev, date){
+      if (ev.target.closest('.cal-chip')) return;   // clicks on a chip are its own actions
+      var raw = window.prompt(
+        'Focus for ' + date + '\n\n' +
+        '· plain text  = a focus for this day\n' +
+        '· start with !  = a reminder (e.g. "!09:30 call Erick")\n' +
+        '· end with → YYYY-MM-DD = spans to that date', '');
+      if (raw === null) return;
+      var text = raw.trim(); if (!text) return;
+      var kind = 'focus', remind = '', end = '';
+      var span = text.match(/(?:→|->)\s*(\d{4}-\d{2}-\d{2})\s*$/);
+      if (span){ end = span[1]; text = text.slice(0, span.index).trim(); }
+      if (text.charAt(0) === '!'){
+        kind = 'reminder'; text = text.slice(1).trim();
+        var t = text.match(/^(\d{1,2}:\d{2})\s+(.*)$/);
+        if (t){ remind = t[1]; text = t[2]; }
+      }
+      if (!text) return;
+      _calPost('/api/plan/create',
+               {start_date:date, kind:kind, text:text, end_date:end, remind_at:remind});
+    };
+  </script>
+
+</div>
+{% endblock %}

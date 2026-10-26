@@ -1,0 +1,45 @@
+{# API keys panel — shows masked values, Replace and Remove buttons.
+   Keys are stored in system/.env on the local machine.
+   Input: keys[] = [{name, label, present, masked}] #}
+
+{% if keys %}
+  {% for k in keys %}
+  <div class="metis-setting-row" style="align-items:center;">
+    <div class="u-grow">
+      <div class="ms-title">{{ k.label }}</div>
+      <div class="ms-help u-mono" style="letter-spacing:0.04em;">
+        {% if k.present %}
+          {{ k.masked }}
+        {% else %}
+          <span style="color:var(--m-muted);font-style:italic;">Not set</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="ms-control u-fixed" style="display:flex;gap:var(--m-space-2);">
+      <button class="btn btn--ghost btn--caps"
+              style="font-size:var(--t-micro);padding:var(--m-space-1) var(--m-space-3);"
+              onclick="openApiKeyReplace('{{ k.name }}', '{{ k.label }}')">
+        {{ 'Replace' if k.present else 'Add' }}
+      </button>
+      {% if k.present %}
+      <button class="btn btn--ghost btn--caps"
+              style="font-size:var(--t-micro);padding:var(--m-space-1) var(--m-space-3);color:var(--m-muted);"
+              onclick="removeApiKey('{{ k.name }}')">
+        Remove
+      </button>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="u-ed" style="padding:var(--m-space-4) var(--m-space-5);font-size:var(--t-body);">
+    No keys configured yet.
+  </div>
+{% endif %}
+
+<div class="u-rule-t" style="padding:var(--m-space-3) var(--m-space-5) var(--m-space-4);margin-top:var(--m-space-1);">
+  <button class="btn btn--ghost btn--caps" style="font-size:var(--t-micro);"
+          onclick="openApiKeyReplace('', 'New custom key')">
+    + Add custom key
+  </button>
+</div>

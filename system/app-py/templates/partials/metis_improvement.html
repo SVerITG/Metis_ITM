@@ -1,0 +1,189 @@
+{# Self-improvement loop surface — Phase 9b, with "What I've learned" header #}
+{% set totals = themes.totals if themes else None %}
+
+<div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5);">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--m-space-3);">
+    <div>
+      <div class="u-title u-title--lg">What I&rsquo;ve learned</div>
+      <div style="font-size:var(--t-meta);color:var(--m-muted);margin-top:var(--m-space-1);">
+        {% if learned %}
+          {{ learned|length }} change{{ '' if learned|length == 1 else 's' }} applied to specialist skills.
+        {% else %}
+          No improvements applied yet — when a draft proposal gets approved and applied, it shows up here.
+        {% endif %}
+      </div>
+    </div>
+    <div class="u-row u-fixed" style="gap:var(--m-space-4);">
+      <button class="btn btn--primary u-mono" type="button" onclick="improveMetisOODA()"
+              style="gap:var(--m-space-2);border:0;padding:var(--m-space-2) var(--m-space-4);letter-spacing:0.12em;white-space:nowrap;"
+              title="Opens Claude (Code recommended) primed to run an OODA self-improvement cycle over your reflexions — Observe · Orient · Decide · Act, in plan mode.">
+        ✦ IMPROVE METIS (OODA)
+      </button>
+      <span class="tail u-label" style="cursor:pointer;"
+            hx-get="/api/partial/metis/improvement"
+            hx-target="#metis-improvement-body"
+            hx-swap="innerHTML">REFRESH</span>
+    </div>
+  </div>
+</div>
+
+{# Recent reflexion log — raw signal feeding the loop #}
+{% if recent_reflexions %}
+<div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5);">
+  <div class="u-mb-3 u-title">
+    Recent reflexions
+    <span class="u-label" style="margin-left:8px;">LAST {{ recent_reflexions|length }} · NEWEST FIRST</span>
+  </div>
+  {% for r in recent_reflexions %}
+  <div style="padding:12px 0;{% if not loop.last %}border-bottom:1px solid var(--m-rule-soft);{% endif %}">
+    <div class="u-mb-2" style="display:flex;align-items:baseline;gap:var(--m-space-3);">
+      <span class="u-label u-label--accent" style="letter-spacing:0.14em;">{{ r.agent_slug }}</span>
+      <span class="u-label">{{ (r.created_at or '')[:16] }}</span>
+    </div>
+    {% if r.went_well %}
+    <div class="u-mb-2" style="font-size:var(--t-meta);line-height:1.6;color:var(--m-ink);">
+      <span class="u-mono" style="letter-spacing:0.12em;color:var(--m-ok);margin-right:6px;">+ WENT WELL</span>{{ r.went_well | clip(280) }}
+    </div>
+    {% endif %}
+    {% if r.could_improve %}
+    <div class="u-mb-2" style="font-size:var(--t-meta);line-height:1.6;color:var(--m-ink);">
+      <span class="u-mono" style="letter-spacing:0.12em;color:var(--m-ochre-deep);margin-right:6px;">~ COULD IMPROVE</span>{{ r.could_improve | clip(280) }}
+    </div>
+    {% endif %}
+    {% if r.tool_wishes %}
+    <div style="font-size:var(--t-meta);line-height:1.6;color:var(--m-muted);font-style:italic;">
+      <span class="u-mono" style="letter-spacing:0.12em;color:var(--m-info);margin-right:6px;font-style:normal;">→ TOOL WISH</span>{{ r.tool_wishes | clip(200) }}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if learned %}
+<div>
+  {% for L in learned %}
+  <div class="learned-row">
+    <div class="learned-head">
+      <span class="chip chip--ok" style="font-size:var(--t-micro);">APPLIED</span>
+      <span class="u-title">{{ L.agent_slug }}</span>
+      <span class="learned-when">{{ (L.applied_at or L.proposed_at or '')[:16] }}</span>
+    </div>
+    {% if L.rationale %}
+    <div style="font-size:var(--t-meta);color:var(--m-text);line-height:1.55;">{{ L.rationale }}</div>
+    {% else %}
+    <div style="font-size:var(--t-meta);color:var(--m-muted);font-style:italic;">No rationale recorded for proposal #{{ L.id }}.</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="u-rule u-rule-t" style="padding:var(--m-space-4) var(--m-space-5);">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--m-space-3);">
+    <div>
+      <div class="u-title">Reflexion themes — last {{ days }} days</div>
+      <div style="font-size:var(--t-meta);color:var(--m-muted);margin-top:var(--m-space-1);">
+        {% if totals and totals.reflexions %}
+          {{ totals.reflexions }} reflexion{{ '' if totals.reflexions == 1 else 's' }} across {{ totals.agents }} agent{{ '' if totals.agents == 1 else 's' }}.
+        {% else %}
+          No reflexions yet. Agents need to call <code class="u-mono">write_reflexion</code> at the end of every run.
+        {% endif %}
+      </div>
+    </div>
+    {#- Themes are computed on demand, NOT on render. Naming Claude Haiku and the
+        cost in the control is the honest thing: the panel used to make nine paid
+        API calls and take 18 seconds every time it was opened, and nothing on
+        screen said so. -#}
+    <div style="text-align:right;flex:none;">
+      <button type="button" class="btn btn--ghost u-mono"
+              style="font-size:var(--t-meta);"
+              hx-post="/api/metis/improvement/refresh-themes?days={{ days }}"
+              hx-target="#metis-improvement-body"
+              hx-swap="innerHTML"
+              hx-indicator="#themes-working"
+              title="Reads your reflexions and asks Claude Haiku to name the recurring themes. Takes about 15 seconds and makes a few small API calls, so it only runs when you ask.">
+        {{ 'Recompute themes' if themes_cached_at else 'Compute themes' }}
+      </button>
+      <div style="font-size:var(--t-meta);color:var(--m-muted);margin-top:var(--m-space-1);">
+        <span id="themes-working" class="htmx-indicator">working&hellip;</span>
+        {%- if themes_cached_at %}
+        <span>last computed {{ themes_cached_at }}</span>
+        {%- else %}
+        <span>not computed yet &mdash; showing word counts</span>
+        {%- endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if themes and themes.agents %}
+  {% for a in themes.agents %}
+  <div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5);">
+    <div class="u-mb-2" style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--m-space-3);">
+      <div class="u-title">
+        {{ a.agent_slug }}
+        <span class="u-label" style="margin-left:8px;">{{ a.n_reflexions }} REFLEXIONS</span>
+      </div>
+      <button class="btn btn--ghost btn--caps" onclick="draftImprovement('{{ a.agent_slug }}')">Draft proposal</button>
+    </div>
+    <div style="font-size:var(--t-meta);color:var(--m-muted);line-height:1.7;">
+      {% if a.could_improve_themes %}
+        <div class="theme-pill-row">
+          <span class="theme-pill-label" style="color:var(--m-ochre-deep);">COULD IMPROVE</span>
+          {% for t, c in a.could_improve_themes %}<span class="theme-pill">{{ t }}<span class="theme-pill-count">{{ c }}</span></span>{% endfor %}
+        </div>
+      {% endif %}
+      {% if a.missing_context_themes %}
+        <div class="theme-pill-row">
+          <span class="theme-pill-label" style="color:var(--m-info);">MISSING CONTEXT</span>
+          {% for t, c in a.missing_context_themes %}<span class="theme-pill">{{ t }}<span class="theme-pill-count">{{ c }}</span></span>{% endfor %}
+        </div>
+      {% endif %}
+      {% if a.tool_wishes_themes %}
+        <div class="theme-pill-row">
+          <span class="theme-pill-label" style="color:var(--m-accent);">TOOL WISHES</span>
+          {% for t, c in a.tool_wishes_themes %}<span class="theme-pill">{{ t }}<span class="theme-pill-count">{{ c }}</span></span>{% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% endif %}
+
+<div style="padding:var(--m-space-4) var(--m-space-5);">
+  <div class="u-mb-3 u-title">Pending proposals</div>
+  {% if proposals %}
+    {% for p in proposals %}
+    <div class="u-rule" style="padding:var(--m-space-3) 0;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--m-space-3);">
+        <div>
+          <span class="u-label">#{{ p.id }} · {{ p.status|upper }}</span>
+          <span class="u-title" style="margin-left:8px;">{{ p.agent_slug }}</span>
+          <span class="u-ed" style="font-size:var(--t-meta);margin-left:8px;">{{ (p.proposed_at or '')[:16] }}</span>
+        </div>
+        <div style="display:flex;gap:var(--m-space-2);flex-wrap:wrap;">
+          {% if p.status == 'draft' %}
+          <button class="btn btn--ghost btn--caps" onclick="promoteProposal({{ p.id }})" title="Mark as pending review">Promote</button>
+          {% endif %}
+          {% if p.status in ('draft','pending','approved') %}
+          <button class="btn btn--ghost btn--caps" onclick="previewProposal({{ p.id }})" title="See the diff before applying">Preview diff</button>
+          <button class="btn btn--primary btn--caps" onclick="applyProposal({{ p.id }})" title="Write the change to the agent's skill.md (with backup)">Apply</button>
+          {% endif %}
+          {% if p.status == 'applied' %}
+          <span class="chip chip--ok" style="font-size:var(--t-micro);">APPLIED</span>
+          {% endif %}
+          {% if p.status not in ('rejected','applied') %}
+          <button class="btn btn--sec btn--caps" onclick="rejectProposal({{ p.id }})">Reject</button>
+          {% endif %}
+        </div>
+      </div>
+      {% if p.rationale %}
+      <div style="font-size:var(--t-meta);color:var(--m-muted);margin-top:var(--m-space-2);line-height:1.6;">{{ p.rationale }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="u-ed" style="padding:var(--m-space-2) 0;font-size:var(--t-small);">No drafts or pending proposals. Drafts surface here once an agent has enough reflexions.</div>
+  {% endif %}
+</div>

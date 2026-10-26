@@ -1,0 +1,98 @@
+<div id="topic-coverage-panel">
+
+  <!-- ── Legend ── -->
+  <div class="u-row u-row--wrap u-mb-4" style="gap:var(--m-space-5);">
+    <span class="u-label u-row">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:var(--m-radius-sm);background:var(--m-ok);" aria-hidden="true"></span>GOOD COVERAGE
+    </span>
+    <span class="u-label u-row">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:var(--m-radius-sm);background:var(--m-warn);" aria-hidden="true"></span>PARTIAL
+    </span>
+    <span class="u-label u-row">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:var(--m-radius-sm);background:var(--m-alert);" aria-hidden="true"></span>GAP
+    </span>
+    <span class="u-label" style="margin-left:auto;">
+      {{ topics | length }} TOPICS · {{ total_papers }} SOURCES INDEXED
+    </span>
+  </div>
+
+  <!-- ── Card grid ── -->
+  {% if topics %}
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--m-space-3);">
+    {% for t in topics %}
+    {% set level = t.level %}
+    {% if level == 'good' %}
+      {% set border_color = 'var(--m-ok)' %}
+      {% set badge_bg = 'var(--m-ok-wash)' %}
+      {% set badge_fg = 'var(--m-ok)' %}
+      {% set badge_text = 'GOOD' %}
+    {% elif level == 'partial' %}
+      {% set border_color = 'var(--m-warn)' %}
+      {% set badge_bg = 'var(--m-warn-wash)' %}
+      {% set badge_fg = 'var(--m-warn)' %}
+      {% set badge_text = 'PARTIAL' %}
+    {% else %}
+      {% set border_color = 'var(--m-alert)' %}
+      {% set badge_bg = 'var(--m-alert-wash)' %}
+      {% set badge_fg = 'var(--m-alert)' %}
+      {% set badge_text = 'GAP' %}
+    {% endif %}
+
+    <div style="background:var(--m-surface);border:1px solid var(--m-rule-soft);border-left:3px solid {{ border_color }};border-radius:var(--m-radius);padding:14px 16px;position:relative;transition:box-shadow 150ms ease,transform 150ms ease;cursor:default;"
+         onmouseover="this.style.boxShadow='var(--m-shadow)';this.style.transform='translateY(-1px)'"
+         onmouseout="this.style.boxShadow='';this.style.transform=''">
+
+      <!-- Badge + count row -->
+      <div class="u-row u-row--between" style="margin-bottom:var(--m-space-2);">
+        <span style="font-family:var(--m-mono);font-size:11px;letter-spacing:0.16em;padding:2px 7px;background:{{ badge_bg }};color:{{ badge_fg }};border-radius:2px;">
+          {{ badge_text }}
+        </span>
+        <span class="u-label">
+          {{ t.paper_count }}
+        </span>
+      </div>
+
+      <!-- Topic name -->
+      <div class="u-mb-2 u-title" style="font-weight:500;line-height:1.25;">
+        {{ t.label }}
+      </div>
+
+      <!-- Description / keywords -->
+      {% if t.description %}
+      <div class="u-label u-mb-3" style="letter-spacing:0.06em;line-height:1.45;">
+        {{ t.description | truncate(70, True, '…') }}
+      </div>
+      {% endif %}
+
+      <!-- Coverage bar -->
+      <div style="height:3px;background:var(--m-surface-2);border-radius:var(--m-radius-sm);overflow:hidden;">
+        <div style="height:100%;width:{{ t.bar_pct }}%;background:{{ border_color }};border-radius:2px;transition:width 400ms ease;"></div>
+      </div>
+
+      <!-- Source breakdown pill row -->
+      {% if t.sources %}
+      <div style="display:flex;flex-wrap:wrap;gap:var(--m-space-1);margin-top:var(--m-space-2);">
+        {% for src_label, src_count in t.sources %}
+        <span class="u-label" style="letter-spacing:0.08em;padding:1px 6px;background:var(--m-surface-2);border-radius:var(--m-radius-sm);">
+          {{ src_label }} {{ src_count }}
+        </span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <!-- Empty state -->
+  <div class="panel" style="padding:var(--m-space-6) var(--m-space-5);text-align:center;">
+    <div class="u-ed" style="font-size:var(--t-body);">
+      No topics configured. Add research topics in Metis to enable coverage mapping.
+    </div>
+    <div class="u-label" style="margin-top:var(--m-space-3);">
+      Try: /metis add a topic for your research domain
+    </div>
+  </div>
+  {% endif %}
+
+</div>

@@ -1,0 +1,59 @@
+{# partials/planner_focus_board.html — Top 3 active projects, focus cards #}
+<div class="panel">
+  <div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5);">
+    <span class="kicker kicker--accent" style="margin:0;">FOCUS BOARD</span>
+    <div style="font-family:var(--m-display);font-size:var(--t-small);color:var(--m-muted);margin-top:var(--m-space-1);">
+      The three projects most worth your attention right now.
+    </div>
+  </div>
+
+  {% if not cards %}
+  <div style="padding:var(--m-space-5) var(--m-space-5);">
+    <p class="u-title" style="line-height:1.6;margin:0 0 var(--m-space-2);">
+      Add your first active project on the Work tab and it'll appear here.
+    </p>
+    <p style="font-family:var(--m-display);font-size:var(--t-small);color:var(--m-muted);line-height:1.6;margin:0 0 var(--m-space-4);">
+      Once it's in, I'll show you the next action, open tasks, and when you last touched it.
+    </p>
+    <a class="u-label u-label--accent" href="/tab/work"
+       style="display:inline-block;letter-spacing:0.14em;text-decoration:none;padding:var(--m-space-2) var(--m-space-4);border:1px solid var(--m-accent);border-radius:var(--m-radius);">
+      OPEN WORK TAB &rarr;
+    </a>
+  </div>
+  {% else %}
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0;">
+    {% for c in cards %}
+    <a href="/tab/work#project-{{ c.id }}"
+       class="focus-card u-rule"
+       style="display:block;padding:var(--m-space-4) var(--m-space-5);border-right:1px solid var(--m-rule-soft);text-decoration:none;color:inherit;position:relative;border-left:3px solid transparent;transition:background 140ms ease, border-left-color 140ms ease;"
+       onmouseover="this.style.background='var(--m-surface-2)';this.style.borderLeftColor='var(--m-accent)';"
+       onmouseout="this.style.background='transparent';this.style.borderLeftColor='transparent';">
+      <div style="font-family:var(--m-mono);font-size:11px;letter-spacing:0.14em;
+                  color:{% if c.priority == 'high' %}var(--m-alert){% elif c.priority == 'medium' %}var(--m-accent){% else %}var(--m-muted){% endif %};
+                  margin-bottom:8px;">
+        {{ c.priority | upper }}{% if c.domain %} &middot; {{ c.domain | upper }}{% endif %}
+      </div>
+      <div class="u-mb-3 u-title u-title--lg" style="line-height:1.3;">
+        {{ c.title }}
+      </div>
+      {% if c.next_step %}
+      <div class="u-mb-3 u-ed" style="font-size:var(--t-meta);line-height:1.5;">
+        Next: {{ c.next_step | clip(100) }}{% if c.next_step | length > 100 %}&hellip;{% endif %}
+      </div>
+      {% endif %}
+      <div class="u-label" style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--m-space-3);letter-spacing:0.10em;">
+        <span>
+          {{ c.open_tasks }} OPEN TASK{% if c.open_tasks != 1 %}S{% endif %}
+        </span>
+        {% if c.touched_label %}
+        <span>{{ c.touched_label | upper }}</span>
+        {% endif %}
+      </div>
+      <div class="u-label u-label--accent" style="margin-top:var(--m-space-3);letter-spacing:0.14em;">
+        OPEN IN WORK &rarr;
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

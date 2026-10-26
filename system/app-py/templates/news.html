@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}News{% endblock %}
+
+{# ══════════════════════════════════════════════════════════════════════════════
+   The News surface — TABS, not one stacked feed.
+
+   It used to be four stacked blocks (digest → front page → by-theme → new in
+   library) on a single scroll. That made one question answerable — "what is
+   closest to my work" — and every other question required reading past it. You
+   could not ask "what is happening in the world" separately, and the literature
+   block put papers on a news surface.
+
+   Now: Overview opens (running stories, not links), and each further tab answers
+   one question at one time-depth. Literature has been removed entirely — papers
+   live on the Library surface. `_news_rows()` excludes source_type='article' at
+   the query level so no tab can reintroduce them; when they were mixed in, the
+   relevance ranking promoted them above real news, because a paper is by
+   definition closer to a researcher's corpus than a BBC headline.
+   ══════════════════════════════════════════════════════════════════════════════ #}
+
+{% block content %}
+<div class="page">
+
+  <!-- ===== Masthead ===== -->
+  <div class="page-head">
+    <div>
+      <div class="page-eyebrow">SURFACE 03 · NEWS RADAR</div>
+      <h1 class="page-title">News.</h1>
+    </div>
+    <div class="page-meta" id="news-meta" style="white-space:pre-line;">
+      <span class="u-label">
+        Curated against your library · Global health · Tropical disease
+      </span>
+    </div>
+  </div>
+
+  <!-- ===== Tabs + body. Every tab swaps this one container, so the masthead
+             never re-renders and switching costs a single request. ===== -->
+  {#- The briefings come FIRST: they are the edited read, and everything
+    below is the raw feed. Both folds start closed. -#}
+  {#- innerHTML, not outerHTML. The partial returns one <section> per briefing —
+      several top-level elements, no wrapper — so an outerHTML swap replaced this
+      div with the first section and DESTROYED id="news-briefings". Two buttons
+      inside the partial ("Fetch now", "Check for new") target that id, so after
+      the first load they had nothing to hit and silently did nothing. Keeping
+      the container means the id survives every refresh. -#}
+  <div id="news-briefings"
+       hx-get="/api/partial/news/briefings"
+       hx-trigger="load"
+       hx-swap="innerHTML"></div>
+
+  <div id="news-tab-body"
+       hx-get="/api/partial/news/tab?tab=overview&period=week"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="news-tabs" aria-hidden="true">
+      {% for _ in range(7) %}<div class="skeleton skeleton-box" style="height:34px;width:118px;margin:0 var(--m-space-1);"></div>{% endfor %}
+    </div>
+    <div class="panel skeleton skeleton-box" style="height:320px;margin-top:var(--m-space-4);"></div>
+  </div>
+
+</div><!-- /.page -->
+{% endblock %}

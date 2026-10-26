@@ -1,0 +1,814 @@
+{% from "partials/_update_menu.html" import update_menu %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metis — {% block title %}Dashboard{% endblock %}</title>
+  <link rel="icon" type="image/png" href="/static/metis-icon.png">
+
+  <!-- Bootstrap 5 (grid + card components used in tab content) -->
+  <link rel="stylesheet"
+        href="/static/vendor/bootstrap.min.css">
+
+  <!-- Bootstrap Icons (used in tab content partials) -->
+  <link rel="stylesheet"
+        href="/static/vendor/bootstrap-icons.min.css">
+
+  <!-- Archive design system — loaded after Bootstrap so it overrides -->
+  <link rel="stylesheet" href="/static/styles.css?v={{ asset_v }}">
+  <script>
+  /* Density and theme are applied to <html> BEFORE the stylesheet paints.
+     Doing it in app.js instead means every page renders once at the default and
+     then reflows — the flash that makes an application feel homemade. Wrapped
+     because localStorage throws outright in a private window. */
+  (function () {
+    try {
+      var d = localStorage.getItem('metis.density');
+      if (d) document.documentElement.dataset.density = d;
+    } catch (e) { /* default density is fine */ }
+  })();
+  </script>
+  <!-- Archive micro-animations -->
+  <link rel="stylesheet" href="/static/motion.css">
+
+  <!-- HTMX — served locally -->
+  <script src="/static/htmx.min.js"></script>
+  <!-- Live meeting JS — loaded globally so it survives HTMX tab swaps -->
+  <script src="/static/live_meeting.js" defer></script>
+
+  <!-- User identity — available to all page scripts -->
+  <script>window.METIS_USER_NAME = {{ (_metis_user_name() if _metis_user_name is defined else 'Researcher') | tojson }};</script>
+
+  <!-- Theme: restore before first paint to avoid flash -->
+  <!-- Respects OS dark-mode preference on first visit; user selection persists via localStorage -->
+  <script>
+    (function () {
+      var VALID = ['archive','fieldwork','paper','observatory','midnight','cavern'];
+      try {
+        var t = localStorage.getItem('metis-theme');
+        if (t && VALID.indexOf(t) !== -1) {
+          document.documentElement.dataset.theme = (t === 'archive') ? '' : t;
+        } else {
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var def = prefersDark ? 'observatory' : 'archive';
+          document.documentElement.dataset.theme = (def === 'archive') ? '' : def;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+
+<!-- =====================================================================
+     App shell — Archive sidebar layout
+====================================================================== -->
+<div class="app" id="app-shell" data-side="expanded" data-motion="on" data-hairline="on" data-lift="on">
+
+  <!-- ---- Sidebar ---- -->
+  <aside class="side">
+
+    <!-- Collapse handle -->
+    <div class="side-collapse"
+         onclick="toggleSidebar()"
+         role="button"
+         tabindex="0"
+         aria-label="Toggle sidebar"
+         onkeydown="if(event.key==='Enter'||event.key===' '){toggleSidebar();}">
+      <svg viewBox="0 0 16 16"><polyline points="10 4 6 8 10 12"/></svg>
+    </div>
+
+    <!-- Brand -->
+    <div class="brand">
+      <div class="b-mark">
+        <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 32 A24 24 0 0 1 56 32" opacity="0.28"/>
+          <path d="M24 50 C 18 50, 14 46, 13 41 C 11 36, 13 31, 12 27 C 11 22, 14 17, 19 15 C 23 13, 27 14, 30 16 C 32 14, 36 13, 40 14 C 46 15, 50 19, 51 24 C 52 28, 51 31, 52 34 C 53 38, 51 43, 47 46 C 44 49, 40 50, 36 49 L 36 52 L 28 52 L 28 50 Z"/>
+          <path d="M30 16 C 31 22, 30 30, 31 38 C 32 43, 34 46, 36 49" opacity="0.85"/>
+          <path d="M18 22 C 22 24, 24 26, 22 30" opacity="0.7"/>
+          <path d="M16 34 C 20 34, 22 32, 26 34" opacity="0.7"/>
+          <path d="M40 20 C 44 22, 45 26, 43 29" opacity="0.7"/>
+          <path d="M42 33 C 46 34, 47 37, 44 40" opacity="0.7"/>
+          <path d="M28 50 C 28 53, 30 54, 32 54 C 34 54, 36 53, 36 50"/>
+          <line x1="32" y1="54" x2="32" y2="57" opacity="0.6"/>
+        </svg>
+      </div>
+      <div class="b-text">
+        <div class="b-word">Meti<em>s</em></div>
+        <div class="b-sub">Research Cortex</div>
+      </div>
+    </div>
+
+    <!-- Surfaces nav section -->
+    {#- `hx-disinherit="*"` on every nav item is load-bearing, not decoration.
+
+        htmx resolves hx-target, hx-select and hx-push-url by walking UP the DOM
+        (`getClosestAttributeValue`). So any child element inside a nav item that
+        makes its own request inherits that item's whole navigation contract.
+
+        The Learning item has exactly such a child — the `n-meta` badge, which
+        polls `/api/partial/learning/nav-meta` on load and every 300s. Without
+        disinherit that tiny "4 courses" fragment ran with hx-target="#tab-content",
+        hx-select="#tab-content" (which the fragment does not contain, so the swap
+        emptied the surface) and hx-push-url="/learning" — silently rewriting the
+        address bar to /learning seconds after every page load, and again every
+        five minutes. Reload, or open the dashboard from the shortcut, and you
+        landed on Learning no matter which surface you had chosen. Bug found
+        2026-08-26; it was the only nav item with a self-fetching child, which is
+        why the dashboard always drifted to Learning specifically.
+
+        `hx-swap="outerHTML"` (not innerHTML) pairs with hx-select="#tab-content":
+        hx-select hands htmx the matched ELEMENT, so an innerHTML swap nested a
+        second #tab-content inside the first on every nav click — duplicate IDs
+        and a fresh 28/32/64px of padding each time. -#}
+    {#- The institution pack's surface sits ABOVE the everyday surfaces, in its
+        own section under the institute's name: it is the one thing in this
+        edition that no other copy of Metis has, so it is the first thing seen.
+        Absent entirely when the edition has no pack. -#}
+    {% set _pk = (edition() if edition is defined else {}).get('pack') or {} %}
+    {% if _pk %}
+    <div class="nav-sec nav-sec--pack">
+      <div class="nav-label"><span>{{ _pk.short_name or 'Institute' }}</span></div>
+      <a class="nav-item {% if active_tab == 'pack' %}active{% endif %}" href="/pack"
+         style="text-decoration:none;color:inherit;{% if _pk.accent %}box-shadow:inset 3px 0 0 {{ _pk.accent }};{% endif %}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <path d="M2 6 L8 2.5 L14 6"/>
+          <line x1="3.5" y1="6.5" x2="3.5" y2="12"/>
+          <line x1="6.5" y1="6.5" x2="6.5" y2="12"/>
+          <line x1="9.5" y1="6.5" x2="9.5" y2="12"/>
+          <line x1="12.5" y1="6.5" x2="12.5" y2="12"/>
+          <line x1="2" y1="13.5" x2="14" y2="13.5"/>
+        </svg>
+        <span class="n-label">{{ _pk.surface_title or _pk.short_name }}</span>
+        <span class="n-meta">{{ (_pk.actions or [])|length }}</span>
+        <span class="n-tip">{{ _pk.name }} — templates, procedures and actions</span>
+      </a>
+    </div>
+    {% endif %}
+
+    <div class="nav-sec">
+      <div class="nav-label"><span>Surfaces</span></div>
+
+      <!-- 01 Today -->
+      <div class="nav-item {% if active_tab == 'today' %}active{% endif %}"
+           data-tab="today"
+           hx-get="/api/tab/today"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/today"
+           onclick="setNavActive(this,'today')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <path d="M2 11 h12"/>
+          <path d="M4.5 11 A 3.5 3.5 0 0 1 11.5 11"/>
+          <line x1="8" y1="3" x2="8" y2="4.5"/>
+          <line x1="3.5" y1="5" x2="4.5" y2="6"/>
+          <line x1="12.5" y1="5" x2="11.5" y2="6"/>
+          <line x1="1.5" y1="8" x2="2.5" y2="8"/>
+          <line x1="13.5" y1="8" x2="14.5" y2="8"/>
+        </svg>
+        <span class="n-label">Today</span>
+        <span class="n-tip">Today</span>
+      </div>
+
+      <!-- 02 News -->
+      <div class="nav-item {% if active_tab == 'news' %}active{% endif %}"
+           data-tab="news"
+           hx-get="/api/tab/news"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/news"
+           onclick="setNavActive(this,'news')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <path d="M8 11 a4 4 0 0 0 0-6"/>
+          <path d="M8 11 a4 4 0 0 1 0-6"/>
+          <path d="M8 13 a7 7 0 0 0 0-10"/>
+          <path d="M8 13 a7 7 0 0 1 0-10"/>
+          <circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/>
+        </svg>
+        <span class="n-label">News</span>
+        <span class="n-tip">News Radar</span>
+      </div>
+
+      {#- STACK IS NO LONGER A SURFACE. Reported 2026-08-29: "The reading stack
+          needs to live somewhere else, not as one of the surfaces but it needs
+          to exist yes."
+
+          It held ZERO items while occupying a tab the same rank as the
+          3,083-item Library. Reading is a state of a paper, not a place, so it
+          is now a tab inside Library at /knowledge#reading. The route /stack
+          still works and is still linked to — only the permanent navbar seat
+          is gone.
+
+          Its one claim on your attention survives: a paper flagged CRUCIAL
+          appears on Today under "what to read first", as a single line, never
+          a list. See partials/today_reading.html. -#}
+
+      <!-- 03 Reflection -->
+      <div class="nav-item {% if active_tab == 'thinking' %}active{% endif %}"
+           data-tab="thinking"
+           hx-get="/api/tab/thinking"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/thinking"
+           onclick="setNavActive(this,'thinking')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <circle cx="5" cy="5.5" r="2.2"/>
+          <circle cx="11" cy="10.5" r="2.2"/>
+          <path d="M6.2 7 C 7 8.5, 8.5 9, 9.8 9.2"/>
+        </svg>
+        <span class="n-label">Reflection</span>
+        <span class="n-tip">Reflection</span>
+      </div>
+
+      <!-- 04 Planner — merged into Work as a Board view (2026-07-14).
+           Planner queried the same tasks/projects tables as Work; it is now the
+           "Board" toggle on the Work surface. Nav entry removed; /planner
+           redirects to /work so old links don't 404. -->
+
+      <!-- 05 Work -->
+      <div class="nav-item {% if active_tab == 'work' %}active{% endif %}"
+           data-tab="work"
+           hx-get="/api/tab/work"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/work"
+           onclick="setNavActive(this,'work')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <rect x="2" y="2.5" width="3.2" height="11"/>
+          <rect x="6.4" y="2.5" width="3.2" height="7.5"/>
+          <rect x="10.8" y="2.5" width="3.2" height="4.5"/>
+        </svg>
+        <span class="n-label">Work</span>
+        <span class="n-tip">Work</span>
+      </div>
+
+      <!-- 06 Meetings -->
+      <div class="nav-item {% if active_tab == 'meetings' %}active{% endif %}"
+           data-tab="meetings"
+           hx-get="/api/tab/meetings"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/meetings"
+           onclick="setNavActive(this,'meetings')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <circle cx="8" cy="8" r="5.5"/>
+          <polyline points="8 4.5 8 8 10.5 9.5"/>
+        </svg>
+        <span class="n-label">Meetings</span>
+        <span class="n-tip">Meetings</span>
+      </div>
+
+      {#- An edition without the learning surface keeps one door: the online
+          statistics course, which is hosted, so nothing ships with the install. -#}
+      {% set _ed = edition() if edition is defined else {} %}
+      {% if surface_on is defined and not surface_on('learning') %}
+      {% if _ed.statistics_course %}
+      <a class="nav-item" href="{{ _ed.statistics_course }}" target="_blank" rel="noopener"
+         style="text-decoration:none;color:inherit;">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <path d="M2 5 L8 2.5 L14 5 L8 7.5 Z"/>
+          <path d="M4.5 6.5 V10 C 4.5 11, 5 11.5, 6 12 L 8 13 L 10 12 C 11 11.5, 11.5 11, 11.5 10 V 6.5"/>
+        </svg>
+        <span class="n-label">Statistics course</span>
+        <span class="n-meta">online ↗</span>
+        <span class="n-tip">Statistics course — opens online</span>
+      </a>
+      {% endif %}
+      {% else %}
+      <!-- 07 Learning -->
+      <div class="nav-item {% if active_tab == 'learning' %}active{% endif %}"
+           data-tab="learning"
+           hx-get="/api/tab/learning"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/learning"
+           onclick="setNavActive(this,'learning')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <path d="M2 5 L8 2.5 L14 5 L8 7.5 Z"/>
+          <path d="M4.5 6.5 V10 C 4.5 11, 5 11.5, 6 12 L 8 13 L 10 12 C 11 11.5, 11.5 11, 11.5 10 V 6.5"/>
+          <line x1="14" y1="5" x2="14" y2="9"/>
+        </svg>
+        <span class="n-label">Learning</span>
+        {#- The ONLY live n-meta. Eight sibling items carried a hardcoded
+            "—" that never filled — eight em-dashes down the sidebar reading
+            as "nothing to report" when they meant "never wired". Removed
+            2026-09-02; add the span back only with a real source behind it. -#}
+        <span class="n-meta" hx-get="/api/partial/learning/nav-meta" hx-trigger="load, every 300s" hx-swap="innerHTML">—</span>
+        <span class="n-tip">Learning</span>
+      </div>
+      {% endif %}
+
+      <!-- 08 Presentation -->
+      {#- Was "Teach", which built courses from scratch — a job that already has
+          a home on Learning, and one that knew nothing about the presentations
+          already on disk. The old routes are still served; only the way in
+          changed. -#}
+      <div class="nav-item {% if active_tab == 'presentation' %}active{% endif %}"
+           data-tab="presentation"
+           hx-get="/api/tab/presentation"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/presentation"
+           onclick="setNavActive(this,'presentation')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <path d="M12.5 2.5 L5 10 L3 13 L6 11 L13.5 3.5 Z"/>
+          <line x1="5" y1="10" x2="6" y2="11"/>
+          <line x1="11" y1="4" x2="12" y2="5"/>
+        </svg>
+        <span class="n-label">Present</span>
+        <span class="n-tip">Presentation</span>
+      </div>
+
+      <!-- 09 Library -->
+      <div class="nav-item {% if active_tab == 'knowledge' %}active{% endif %}"
+           data-tab="knowledge"
+           hx-get="/api/tab/knowledge"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/knowledge"
+           onclick="setNavActive(this,'knowledge')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <rect x="2.5" y="2.5" width="3" height="11"/>
+          <rect x="6" y="3.5" width="3" height="10"/>
+          <rect x="9.5" y="4.5" width="4" height="9"/>
+          <line x1="10.5" y1="6.5" x2="12.5" y2="6.5"/>
+        </svg>
+        <span class="n-label">Library</span>
+        <span class="n-tip">Library</span>
+      </div>
+
+    </div><!-- /.nav-sec surfaces -->
+
+    {# ── Focus shelf ─────────────────────────────────────────────────────────
+       Between Surfaces and System, because that is what it is: not a permanent
+       surface, not machinery. A subject that has the researcher's attention right now.
+
+       Rendered from `focus_areas WHERE state='active'` — so putting something on
+       the shelf puts it in the navbar, and taking it off removes it, with no
+       template change. At most three: a shelf with ten things on it is not a
+       focus, and the cap is what makes the section mean something.
+
+       The section disappears entirely when the shelf is empty rather than showing
+       an empty heading — a label with nothing under it reads as a broken feature.
+    #}
+    {# `is defined` is load-bearing: there are SEVENTEEN Jinja2Templates
+       instances in this app, each with its own environment, so a global
+       registered on one is invisible to the others. install_shared_globals()
+       in main.py installs it on all of them; this guard means a router that
+       builds its own environment later degrades to a missing navbar section
+       rather than a 500 on every page it serves. #}
+    {% set _shelf = focus_shelf() if focus_shelf is defined else [] %}
+    <div class="nav-sec">
+      <div class="nav-label"><span>Focus</span></div>
+      {% for f in _shelf %}
+      <div class="nav-item {% if active_tab == 'focus:' ~ f.slug %}active{% endif %}"
+           data-tab="focus:{{ f.slug }}"
+           onclick="window.location='{{ f.href }}'"{% if f.entry_kind != 'lens' %} target-kind="{{ f.entry_kind }}"{% endif %}
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+             width="16" height="16">
+          <circle cx="8" cy="8" r="5.5"/>
+          <circle cx="8" cy="8" r="1.8"/>
+        </svg>
+        <span class="n-label">{{ f.title }}</span>
+        {#- The slot number is what this said until 2026-09-03, and a slot number
+            is not news. When the focus's lens has found something since the last
+            visit the count replaces it and is marked; opening the focus clears
+            it. Reads a stored column — see `_focus_shelf`. -#}
+        {% if f.entry_kind != 'lens' %}
+        {#- A shortcut has no lens, so it can never have "new since your last
+            visit". It says what it opens instead, which is the one thing a
+            reader needs to know before clicking it. -#}
+        <span class="n-meta" title="Opens the {{ f.entry_kind }} itself">{{ f.entry_kind }}</span>
+        {% elif f.n_new %}
+        <span class="n-meta n-meta--new" title="{{ f.n_new }} new since your last visit">{{ f.n_new }}</span>
+        {% else %}
+        <span class="n-meta">{{ f.shelf_slot }}</span>
+        {% endif %}
+        <span class="n-tip">{{ f.title }}{% if f.subtitle %} — {{ f.subtitle }}{% endif %}</span>
+      </div>
+      {% endfor %}
+
+      {# Always present, and it is not decoration: when the shelf is empty this is
+         the ONLY route to /focus, so without it a user could never create their
+         first focus from the interface — the exact gap this section exists to
+         close. Reads "Add a focus" when empty and "Manage" when not, because an
+         empty shelf needs an invitation and a full one needs a door. #}
+      <div class="nav-item {% if active_tab == 'focus-index' %}active{% endif %}"
+           data-tab="focus-index"
+           onclick="window.location='/focus'"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+             width="16" height="16">
+          <line x1="8" y1="3.5" x2="8" y2="12.5"/>
+          <line x1="3.5" y1="8" x2="12.5" y2="8"/>
+        </svg>
+        <span class="n-label">{% if _shelf %}Manage{% else %}Add a focus{% endif %}</span>
+        <span class="n-meta">{{ _shelf|length }}/3</span>
+        <span class="n-tip">All focus areas — create, shelve, archive</span>
+      </div>
+    </div><!-- /.nav-sec focus -->
+
+    <!-- System nav section -->
+    <div class="nav-sec">
+      <div class="nav-label"><span>System</span></div>
+
+      <!-- 09 Metis -->
+      <div class="nav-item {% if active_tab == 'metis' %}active{% endif %}"
+           data-tab="metis"
+           hx-get="/api/tab/metis"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/metis"
+           onclick="setNavActive(this,'metis')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <path d="M10 12 C 8 12.5, 6 11.5, 5.5 9.5 C 5 9.5, 4 9, 4 8 C 4 7, 4.5 6.5, 5.5 6.5 C 5.5 5, 7 4, 8.5 4.2 C 9 3.5, 10 3.5, 10.5 4 C 11.5 4, 12.5 5, 12.5 6.2 C 13 7, 13 8.5, 12.2 9.5 C 12.5 11, 11.5 12, 10 12 Z"/>
+          <path d="M8.5 4.5 C 8.8 6, 8.5 8, 9 10 C 9.3 11, 9.7 11.5, 10 12" opacity="0.7"/>
+        </svg>
+        <span class="n-label">Metis</span>
+        <span class="n-tip">Metis</span>
+      </div>
+
+      {# Memory surface merged into the Metis surface's Memory section (S.4).
+         Old /memory links redirect to /metis via memory_health.py. #}
+
+    </div><!-- /.nav-sec system -->
+
+    <!-- Sidebar footer -->
+    <div class="side-foot">
+      <span class="mini-ava">{{ (_metis_user_name()[0]|upper) if (_metis_user_name is defined and _metis_user_name()) else 'R' }}</span>
+      <span class="sf-text">Research Cortex</span>
+    </div>
+
+  </aside><!-- /.side -->
+
+  <!-- ---- Main pane ---- -->
+  <div class="main">
+
+    <!-- Topbar -->
+    <div class="topbar">
+
+      <div class="crumbs u-fixed">
+        <span>Metis</span>
+        <span class="sep">/</span>
+        <span class="here" id="crumb-here">{{ active_tab|title if active_tab else 'Today' }}</span>
+      </div>
+
+      <!-- Capture button — left, next to the breadcrumb -->
+      <button class="t-capture u-fixed" onclick="openCapture()" aria-label="Quick capture" title="Quick capture — keyboard shortcut Ctrl/⌘ + K" style="margin-left:20px;">
+        <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <line x1="8" y1="3" x2="8" y2="13"/>
+          <line x1="3" y1="8" x2="13" y2="8"/>
+        </svg>
+        Capture
+        <kbd class="u-label" style="margin-left:6px;letter-spacing:0.06em;padding:1px 5px;border:1px solid var(--m-rule-soft);border-radius:var(--m-radius);opacity:0.8;">⌘K</kbd>
+      </button>
+
+      <div class="topbar-controls u-row" style="gap:var(--m-space-4);margin-left:auto;min-width:0;flex-shrink:1;overflow:hidden;">
+
+        {#- ── Search: a BUTTON, not a box ────────────────────────────────
+             Asked for 2026-09-02. There were two search inputs on Today, 150px
+             apart — one in this bar, one on the page — and they called DIFFERENT
+             endpoints, so the same question got two different answers. The page
+             one used knowledge.py's `unified-search`, which fans out across the
+             three library silos and episodic memory (27 results for "screening",
+             grouped by source). This bar's `/api/search` returned 7 papers whose
+             links ALL pointed at `/tab/knowledge` rather than at the paper, so
+             its results were not even navigable.
+
+             One control now, opening one dialog, calling the better endpoint.
+             A button also costs no width in a bar that was already overflowing,
+             and gives the field room to show grouped results when it is open. -#}
+        <button class="t-searchbtn" type="button" onclick="openSearch()"
+                aria-label="Search your archive"
+                title="Search papers, notes, meetings and memory — keyboard shortcut /">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5"/><line x1="10.2" y1="10.2" x2="13" y2="13"/>
+          </svg>
+          <span class="t-searchbtn-label">Search</span>
+          <kbd class="t-searchbtn-kbd">/</kbd>
+        </button>
+
+        <!-- MCP toggle button -->
+        <button class="u-label u-label--wide" id="mcp-toggle-btn"
+                onclick="mcpToggle()"
+                aria-label="Metis connection — click to reconnect if offline"
+                title="Metis connection — click to reconnect if offline"
+                style="display:inline-flex;align-items:center;gap:var(--m-space-2);background:none;border:1px solid var(--m-rule);border-radius:var(--m-radius-sm);padding:var(--m-space-1) var(--m-space-3);cursor:pointer;transition:border-color .15s,color .15s;">
+          <span class="u-fixed" id="mcp-dot" style="width:6px;height:6px;border-radius:50%;background:var(--m-rule);transition:background .3s;"></span>
+          <span id="mcp-label">Connected</span>
+          <!-- Hidden compat refs -->
+          <button class="u-hide" id="mcp-reconnect-btn" onclick="mcpReconnect()"></button>
+        </button>
+
+        <!-- Update menu — same two-path popup as every dashboard section -->
+        {%- set claude_global_prompt -%}
+Run my full Metis update. Using the metis-rc tools: scan the latest news and any new literature, refresh my Outbreaks, Events and Funding boards with current items you find on the web (via update_today_board), write my daily brief, then show me a short summary of everything that changed.
+        {%- endset -%}
+        {% set global_update_opts = [
+          {'icon': '✦', 'label': 'With Claude Desktop', 'sub': 'full update on your subscription · no API tokens',
+           'href': 'claude://claude.ai/new?q=' ~ (claude_global_prompt | trim | urlencode), 'primary': true,
+           'title': 'Open Claude Desktop and run a full Metis update — no API key needed.'},
+          {'icon': '↻', 'label': 'With the API', 'sub': 'boards · news summaries · your brief · uses API credit',
+           'onclick': 'runMetisUpdateApi()',
+           'title': 'Run the whole update here: local scan first, then the boards, the news summaries and your brief via the API.'},
+          {'icon': '↻', 'label': 'Local scan', 'sub': 'news feeds · library · Zotero · projects · free',
+           'onclick': 'runMetisUpdate()',
+           'title': 'Scan your feeds, library and projects locally — no internet search, no tokens.'}
+        ] %}
+        {{ update_menu('global', global_update_opts, align='right', trigger_class='update-menu-trigger--topbar') }}
+        <span class="u-label u-hide" id="update-spinner">UPDATING…</span>
+
+        <!-- Theme switch -->
+        <div class="theme-switch"
+             id="theme-switch"
+             data-mode="archive"
+             onclick="toggleTheme()"
+             role="switch"
+             tabindex="0"
+             aria-label="Toggle Archive / Observatory theme"
+             onkeydown="if(event.key==='Enter'||event.key===' '){toggleTheme();}">
+          <div class="ts-rail">
+            <svg class="ts-glyph sun" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+              <circle cx="8" cy="8" r="3"/>
+              <line x1="8" y1="1.5" x2="8" y2="3.5"/>
+              <line x1="8" y1="12.5" x2="8" y2="14.5"/>
+              <line x1="1.5" y1="8" x2="3.5" y2="8"/>
+              <line x1="12.5" y1="8" x2="14.5" y2="8"/>
+              <line x1="3.3" y1="3.3" x2="4.7" y2="4.7"/>
+              <line x1="11.3" y1="11.3" x2="12.7" y2="12.7"/>
+              <line x1="3.3" y1="12.7" x2="4.7" y2="11.3"/>
+              <line x1="11.3" y1="4.7" x2="12.7" y2="3.3"/>
+            </svg>
+            <svg class="ts-glyph moon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+              <path d="M12.5 9.5 A5 5 0 1 1 6.5 3.5 A4 4 0 0 0 12.5 9.5 Z"/>
+            </svg>
+          </div>
+          <div class="ts-thumb"></div>
+        </div>
+
+        <!-- Trust badge -->
+        <div class="t-trust"
+             hx-get="/api/trust-badge"
+             hx-trigger="load, every 60s"
+             hx-swap="innerHTML">Metis · online</div>
+
+      </div>
+    </div><!-- /.topbar -->
+
+    <!-- Demo mode banner (renders empty outside demo mode) -->
+    <div hx-get="/api/partial/demo-banner" hx-trigger="load" hx-swap="outerHTML"></div>
+
+    <!-- API key status banner (visible only when ANTHROPIC_API_KEY is missing) -->
+    <div hx-get="/api/partial/api-key-status" hx-trigger="load" hx-swap="outerHTML"></div>
+
+    <!-- First-run welcome banner (HTMX-loaded; renders empty if user is already configured) -->
+    <div hx-get="/api/partial/welcome-banner" hx-trigger="load" hx-swap="outerHTML"></div>
+
+    <!-- Tab content (scroll area) -->
+<!-- Icon sprite. Defined once; every .act references a symbol with <use>.
+     Inlining the paths instead put 300 copies of six icons on the News tab —
+     the same markup repeated until it outweighed the headlines. -->
+<svg width="0" height="0" style="position:absolute;" aria-hidden="true" focusable="false">
+  <defs>
+    <g id="i-later"><path d="M4 2h8v12l-4-3-4 3z"/></g>
+    <g id="i-saved"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.2L8 11.6l-3.8 2 .7-4.2-3.1-3 4.3-.6z"/></g>
+    <g id="i-read"><path d="M2.5 8.5l3.5 3.5 7.5-8"/></g>
+    <g id="i-declined"><circle cx="8" cy="8" r="6"/><path d="M5.5 8h5"/></g>
+    <g id="i-tag"><path d="M2 2h5.5L14 8.5 8.5 14 2 7.5z"/><circle cx="5" cy="5" r=".9"/></g>
+    <g id="i-date"><rect x="2" y="3.5" width="12" height="10.5" rx="1.5"/><path d="M2 6.5h12"/><path d="M5.5 2v3M10.5 2v3"/></g>
+    <g id="i-undo"><path d="M3 8a5 5 0 1 1 1.6 3.7"/><path d="M2.2 4.6V8H5.6"/></g>
+  </defs>
+</svg>
+    <div class="scroll surface-fade" id="tab-content" style="padding:var(--m-space-6) var(--m-space-6) var(--m-space-8);">
+      {% block content %}{% endblock %}
+    </div>
+
+  </div><!-- /.main -->
+
+</div><!-- /.app -->
+
+<!-- =====================================================================
+     Capture modal overlay
+====================================================================== -->
+<div id="capture-overlay" onclick="handleOverlayClick(event)" role="button" tabindex="0">
+  <div id="capture-modal-inner"></div>
+</div>
+
+{#- ── Search dialog ──────────────────────────────────────────────────────────
+    Opened by the top-bar button or "/". Modelled on the capture overlay above
+    rather than invented separately, so there is one dialog behaviour in the app
+    and one Escape handler: same backdrop, same spring-in, same click-outside.
+
+    The field is NOT autofocused by the markup — it is focused from openSearch()
+    after the dialog is displayed, because focusing a hidden element silently
+    does nothing and then the first keystroke goes to the page behind. -#}
+<div id="search-overlay" onclick="handleSearchOverlayClick(event)" role="button" tabindex="-1"
+     aria-hidden="true">
+  <div id="search-modal" role="dialog" aria-modal="true" aria-labelledby="search-modal-title">
+    <h2 id="search-modal-title" class="sr-only">Search your archive</h2>
+
+    <div class="search-modal-head">
+      <svg class="search-modal-ico" viewBox="0 0 16 16" width="15" height="15" fill="none"
+           stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+           stroke-linejoin="round" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5"/><line x1="10.2" y1="10.2" x2="13" y2="13"/>
+      </svg>
+      <input id="search-modal-input" type="search" name="q" autocomplete="off"
+             placeholder="Find a paper, a meeting, a note, a decision…"
+             aria-label="Search papers, notes, meetings and memory"
+             hx-get="/api/partial/knowledge/unified-search"
+             hx-trigger="keyup changed delay:300ms, search"
+             hx-target="#search-modal-results"
+             hx-swap="innerHTML"
+             hx-indicator="#search-modal-spin">
+      <span id="search-modal-spin" class="htmx-indicator search-modal-spin">reading the archive…</span>
+      <button type="button" class="search-modal-close" onclick="closeSearch()"
+              aria-label="Close search" title="Close (Esc)">&times;</button>
+    </div>
+
+    <div id="search-modal-results" class="search-modal-results">
+      {#- The resting state names what is actually searched, so an empty dialog
+          still tells you something. It is replaced by the first result set. -#}
+      <p class="search-modal-hint">
+        Searches your papers, index cards, meetings, notes and past sessions.
+        <br><span class="search-modal-hint-k">Esc</span> closes.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- =====================================================================
+     Scripts
+====================================================================== -->
+<!-- Bootstrap JS bundle (for Bootstrap components in tab content) -->
+<script src="/static/vendor/bootstrap.bundle.min.js"></script>
+
+<!-- Metis app JS -->
+<script src="/static/app.js?v={{ asset_v }}"></script>
+
+<!-- Archive shell JS -->
+<script>
+  const NAV_LABELS = {
+    today: 'Today', knowledge: 'Library', news: 'News', thinking: 'Reflection',
+    planner: 'Planner', work: 'Work', meetings: 'Meetings',
+    learning: 'Learning', presentation: 'Presentation', teach: 'Teach', metis: 'Metis'
+  };
+
+  function setNavActive(el, tabId) {
+    if (!el) return;
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    el.classList.add('active');
+    const crumb = document.getElementById('crumb-here');
+    if (crumb) crumb.textContent = NAV_LABELS[tabId] || tabId;
+  }
+
+  function toggleSidebar() {
+    const app = document.getElementById('app-shell');
+    app.dataset.side = app.dataset.side === 'rail' ? 'expanded' : 'rail';
+    // If user manually expands on a narrow screen, clear the auto-collapse flag
+    if (app.dataset.side === 'expanded') _sidebarAutoCollapsed = false;
+  }
+
+  // Auto-collapse sidebar on narrow viewports (≤1024px)
+  var _sidebarAutoCollapsed = false;
+  function _syncSidebarWidth() {
+    var app = document.getElementById('app-shell');
+    if (!app) return;
+    var narrow = window.innerWidth <= 1024;
+    if (narrow && app.dataset.side !== 'rail') {
+      app.dataset.side = 'rail';
+      _sidebarAutoCollapsed = true;
+    } else if (!narrow && _sidebarAutoCollapsed && app.dataset.side === 'rail') {
+      app.dataset.side = 'expanded';
+      _sidebarAutoCollapsed = false;
+    }
+  }
+  document.addEventListener('DOMContentLoaded', _syncSidebarWidth);
+  window.addEventListener('resize', _syncSidebarWidth);
+
+  // 6-theme system: 3 light (archive, fieldwork, paper) + 3 dark (observatory, midnight, cavern).
+  // Toggle switches between the user's chosen light theme and chosen dark theme.
+  var _THEME_GROUP = {
+    archive: 'light', fieldwork: 'light', paper: 'light',
+    observatory: 'dark', midnight: 'dark', cavern: 'dark'
+  };
+
+  function applyTheme(theme) {
+    var group = _THEME_GROUP[theme] || 'light';
+    // Apply to DOM — archive maps to empty string (default :root block)
+    document.documentElement.dataset.theme = (theme === 'archive') ? '' : theme;
+    // Sync topbar switch icon
+    var sw = document.getElementById('theme-switch');
+    if (sw) sw.dataset.mode = group;
+    // Sync swatch highlights
+    document.querySelectorAll('.theme-swatch').forEach(function (el) {
+      el.dataset.active = (el.dataset.theme === theme) ? 'true' : 'false';
+    });
+    // Save: current theme + chosen-for-group
+    try {
+      localStorage.setItem('metis-theme', theme);
+      localStorage.setItem('metis-' + group + '-theme', theme);
+    } catch (e) {}
+    // Persist server-side (best-effort)
+    try {
+      fetch('/api/settings/theme', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theme: theme })
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  function toggleTheme() {
+    var current = document.documentElement.dataset.theme || 'archive';
+    if (!current) current = 'archive';
+    var currentGroup = _THEME_GROUP[current] || 'light';
+    var target;
+    if (currentGroup === 'light') {
+      try { target = localStorage.getItem('metis-dark-theme') || 'observatory'; } catch (e) { target = 'observatory'; }
+    } else {
+      try { target = localStorage.getItem('metis-light-theme') || 'archive'; } catch (e) { target = 'archive'; }
+    }
+    applyTheme(target);
+  }
+
+  // Sync topbar switch on first load.
+  (function () {
+    var VALID = ['archive','fieldwork','paper','observatory','midnight','cavern'];
+    try {
+      var t = localStorage.getItem('metis-theme');
+      if (t && VALID.indexOf(t) !== -1) {
+        document.addEventListener('DOMContentLoaded', function () { applyTheme(t); });
+      }
+    } catch (e) {}
+  })();
+
+  // HTMX global error handler — replace failed zones with a non-blocking error notice
+  document.addEventListener('htmx:responseError', function(evt) {
+    var el = evt.detail.elt;
+    if (!el) return;
+    var target = evt.detail.target || el;
+    target.innerHTML =
+      '<div class="u-label" style="padding:var(--m-space-4) var(--m-space-5);' +
+      'display:flex;align-items:center;gap:var(--m-space-3);border:1px solid var(--m-rule-soft);border-radius:var(--m-radius);">' +
+      '<span style="color:var(--m-warn);">⚠</span> Something went wrong loading this section — I\'ll try again in a moment. ' +
+      '<button onclick="htmx.trigger(this.closest(\'[hx-get],[hx-post]\') || document.body, \'load\')" ' +
+      'style="background:none;border:1px solid var(--m-rule);border-radius:var(--m-radius-sm);padding:var(--m-space-1) var(--m-space-2);' +
+      'font-family:var(--m-mono);font-size:var(--t-micro);color:var(--m-muted);cursor:pointer;">Retry</button></div>';
+  });
+  document.addEventListener('htmx:sendError', function(evt) {
+    var target = evt.detail.target || evt.detail.elt;
+    if (!target) return;
+    target.innerHTML =
+      '<div class="u-label" style="padding:var(--m-space-4) var(--m-space-5);' +
+      'display:flex;align-items:center;gap:var(--m-space-3);border:1px solid var(--m-rule-soft);border-radius:var(--m-radius);">' +
+      '<span style="color:var(--m-warn);">⚠</span> I can\'t reach the server right now. Check your connection, or restart the dashboard if it\'s been a while.</div>';
+  });
+</script>
+
+</body>
+</html>

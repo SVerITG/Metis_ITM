@@ -1,0 +1,224 @@
+{% from "partials/_empty.html" import panel as empty_panel %}
+{% extends "base.html" %}
+{% from "partials/_section.html" import sec_label %}
+{% block title %}Focus areas{% endblock %}
+
+{#
+  ══════════════════════════════════════════════════════════════════════════════
+  THE FOCUS INDEX — where focus areas are made, and where the ones off the shelf
+  live.
+
+  Two gaps this closes. Creating a focus previously required an MCP call, which
+  contradicts the premise: a surface is not one a user can add if adding one needs
+  a tool call. And `following` / `archived` areas appeared nowhere — only active
+  areas reach the navbar, so an interest set aside could be reopened only by
+  typing its slug, which is exactly the slug nobody remembers.
+
+  The form asks for keyword GROUPS in separate fields rather than for JSON. The
+  conjunction is the one thing a user must understand for the lens to behave, and
+  two boxes labelled "must mention one of" and "AND one of" teach it by
+  construction. The live preview then shows what the lens catches before it is
+  saved — previously the only way to find out was to create the focus and find the
+  surface empty.
+  ══════════════════════════════════════════════════════════════════════════════
+#}
+
+{% block content %}
+<div class="page">
+
+  <div class="page-head">
+    <div>
+      <div class="page-eyebrow">FOCUS AREAS</div>
+      <h1 class="page-title">Focus</h1>
+      <div class="u-ed" style="font-size:var(--t-small);margin-top:var(--m-space-1);">
+        Subjects you want to stay current on — not courses you finish
+      </div>
+    </div>
+    <div class="page-meta">{{ n_active }} / {{ max_shelf }} SHELF SLOTS USED</div>
+  </div>
+
+  {# ── Existing areas ────────────────────────────────────────────────────── #}
+  <div>
+    {{ sec_label("Your focus areas") }}
+    {% if not areas %}
+    {{ empty_panel("None yet", "Create one below.") }}
+    {% else %}
+    <div class="panel" style="padding:var(--m-space-1) 0;">
+      {% for a in areas %}
+      <div style="padding:12px 18px;display:flex;gap:14px;align-items:baseline;
+                  {% if not loop.last %}border-bottom:1px solid var(--m-line);{% endif %}
+                  {% if a.state == 'archived' %}opacity:.6;{% endif %}">
+        <span class="u-fixed u-mono" style="letter-spacing:.1em;text-transform:uppercase;color:var(--m-muted);width:74px;">
+          {% if a.shelf_slot %}SLOT {{ a.shelf_slot }}{% else %}{{ a.state }}{% endif %}
+        </span>
+        <div class="u-grow">
+          <a href="/focus/{{ a.slug }}"
+             style="font-size:var(--t-body);color:inherit;text-decoration:none;border-bottom:1px solid var(--m-line);">{{ a.title }}</a>
+          {% if a.subtitle %}
+          <div style="font-size:var(--t-meta);color:var(--m-muted);margin-top:var(--m-space-1);">{{ a.subtitle }}</div>
+          {% endif %}
+        </div>
+        <span class="u-mono" style="color:var(--m-muted);white-space:nowrap;font-variant-numeric:tabular-nums;">
+          {{ a.n_news }} news · {{ a.n_reading }} papers · {{ a.n_thinking }} notes
+        </span>
+        <div style="display:flex;gap:var(--m-space-2);">
+          {% for s, label in [('active','Shelf'), ('following','Follow'), ('archived','Archive')] %}
+            {% if a.state != s %}
+            <button class="btn btn--sec u-mono" hx-post="/api/focus/{{ a.slug }}/state"
+                    hx-vals='{"state": "{{ s }}"}' hx-swap="none"
+                    hx-on::after-request="window.location.reload()"
+                    style="padding:var(--m-space-1) var(--m-space-2);color:var(--m-ink);">{{ label }}</button>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  {# ── Create ────────────────────────────────────────────────────────────── #}
+  <div style="margin-top:var(--m-space-6);">
+    {{ sec_label("New focus area", tail="TWO AXES, JOINED WITH AND") }}
+
+    {#- TWO WAYS TO START, one form. Asked for 2026-09-14: a focus can now be
+        seeded from a project or a course you already have, instead of only from
+        a blank pair of boxes.
+
+        It SEEDS the form rather than creating the focus, for the same reason the
+        "let Metis suggest one" link below does: this form previews the lens
+        against the real corpus before you commit, and it writes the structured
+        keyword groups the shelf and the news filter consume. A path that skipped
+        it would produce focus areas nobody had seen the catch for — and an empty
+        shelf slot is worse than an empty shelf. -#}
+    <div class="fseed">
+      <div class="fseed-ways">
+        <button type="button" class="fseed-way is-on" data-seed-way="blank"
+                onclick="focusSeedWay('blank', this)">
+          <span class="fseed-t">Start from scratch</span>
+          <span class="fseed-d">name it and choose the two axes yourself</span>
+        </button>
+        <button type="button" class="fseed-way" data-seed-way="from"
+                onclick="focusSeedWay('from', this)">
+          <span class="fseed-t">From a project or course</span>
+          <span class="fseed-d">take the subject from work you already have</span>
+        </button>
+      </div>
+      <div id="fseed-picker" hidden>
+        <p class="fseed-hint">
+          Two things a shelf slot can be. Click the <strong>name</strong> to build a
+          <em>lens</em> about it — Metis reads how it is named, and for a course the
+          titles of its own lessons, to propose the two axes; everything lands in the
+          boxes below for you to edit against the preview. Click
+          <strong>open it</strong> instead to put the thing <em>itself</em> on the
+          shelf, with no lens at all: clicking that slot opens the course or project.
+        </p>
+        <div class="fseed-group"><span class="fseed-l">Courses</span>
+          <div class="fseed-row" id="fseed-courses"></div></div>
+        <div class="fseed-group"><span class="fseed-l">Projects</span>
+          <div class="fseed-row" id="fseed-projects"></div></div>
+      </div>
+    </div>
+
+    <form method="post" action="/api/focus/create" id="focus-create-form" class="panel panel--md" style="display:grid;gap:var(--m-space-4);">
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--m-space-3);">
+        <label style="display:grid;gap:var(--m-space-1);">
+          <span class="u-mono" style="letter-spacing:.1em;text-transform:uppercase;color:var(--m-muted);">Title</span>
+          <input name="title" required placeholder="AI in Health &amp; Epidemiology"
+                 style="font-size:var(--t-small);padding:var(--m-space-2) var(--m-space-3);border:1px solid var(--m-line);border-radius:var(--m-radius);background:transparent;color:var(--m-ink);" aria-label="AI in Health & Epidemiology">
+        </label>
+        <label style="display:grid;gap:var(--m-space-1);">
+          <span class="u-mono" style="letter-spacing:.1em;text-transform:uppercase;color:var(--m-muted);">One line on what it is for</span>
+          <input name="subtitle" placeholder="Staying current on how AI is actually used"
+                 style="font-size:var(--t-small);padding:var(--m-space-2) var(--m-space-3);border:1px solid var(--m-line);border-radius:var(--m-radius);background:transparent;color:var(--m-ink);" aria-label="Staying current on how AI is actually used">
+        </label>
+      </div>
+
+      <p style="margin:0;font-size:var(--t-meta);color:var(--m-muted);line-height:1.55;">
+        A focus is usually <strong>two subjects crossed</strong>. Put one axis in each
+        box, comma-separated. An item must mention <em>something from every box</em> —
+        that is what keeps “AI in health” from returning
+        <em>“Can AI ever be conscious?”</em>.
+      </p>
+
+      {#- "Not sure? Let Metis suggest one" — it SEEDS the form, it does not replace
+          it. The form does two things a conversation cannot: it previews the lens
+          against the real corpus before you commit, and it writes the structured
+          `keyword_groups` the shelf and the news filter actually consume. What a
+          conversation is better at is the part before that — knowing what you have
+          been reading and working on, and proposing two axes worth crossing. So
+          the deeplink carries your recent work and asks for keywords you paste
+          back into these boxes. -#}
+      {% if suggest_link %}
+      <div class="fs-suggest">
+        <span>Not sure what to focus on?</span>
+        <a class="ft-ask" href="{{ suggest_link }}" style="margin-top:0;">
+          Let Metis suggest one →
+        </a>
+        <span class="fs-hint">
+          Opens Claude with your recent projects, ideas and reading, and asks for
+          two axes to cross. Paste the keywords it gives you into the boxes below.
+        </span>
+      </div>
+      {% endif %}
+
+      <div style="display:grid;gap:var(--m-space-3);"
+           hx-post="/api/focus/preview" hx-target="#lens-preview" hx-swap="innerHTML"
+           {#- The preview now CONFIRMS each match with a word-boundary pass instead
+               of counting raw substring hits, which is the difference between
+               "663 news" and the true 53 — but it costs a couple of seconds. So it
+               fires when you finish a box rather than on every pause in typing:
+               one correct answer beats five approximate ones racing each other. -#}
+           hx-trigger="change from:find input, keyup changed delay:1800ms from:find input"
+           hx-include="closest form">
+        {% for n, hint in [(1,'artificial intelligence, machine learning, llm, algorithm'),
+                           (2,'health, clinical, patient, epidemi, diagnos'),
+                           (3,'(optional third axis)')] %}
+        <label style="display:grid;gap:var(--m-space-1);">
+          <span class="u-mono" style="letter-spacing:.1em;text-transform:uppercase;color:var(--m-muted);">
+            {% if n == 1 %}Must mention one of{% elif n == 2 %}AND one of{% else %}AND one of (optional){% endif %}
+          </span>
+          <input name="group{{ n }}" placeholder="{{ hint }}"
+                 style="font-size:var(--t-small);padding:var(--m-space-2) var(--m-space-3);border:1px solid var(--m-line);border-radius:var(--m-radius);background:transparent;color:var(--m-ink);" aria-label="{{ hint }}">
+        </label>
+        {% endfor %}
+      </div>
+
+      <div id="lens-preview">
+        <p class="u-label" style="margin:0;">
+          Type above to see what this lens would catch.
+        </p>
+      </div>
+
+      {% if layers %}
+      <label style="display:grid;gap:var(--m-space-1);">
+        <span class="u-mono" style="letter-spacing:.1em;text-transform:uppercase;color:var(--m-muted);">
+          Knowledge layers to search (optional, comma-separated)</span>
+        <input name="layers" placeholder="{{ layers[:4] | map(attribute='slug') | join(', ') }}"
+               style="font-size:var(--t-small);padding:var(--m-space-2) var(--m-space-3);border:1px solid var(--m-line);border-radius:var(--m-radius);background:transparent;color:var(--m-ink);" aria-label="{{ layers[:4] | map(attribute='slug') | join(', ') }}">
+        <span style="font-size:var(--t-meta);color:var(--m-muted);">
+          Available: {% for l in layers %}<code>{{ l.slug }}</code> ({{ l.docs }}){% if not loop.last %} · {% endif %}{% endfor %}
+        </span>
+      </label>
+      {% endif %}
+
+      <div class="u-row" style="gap:var(--m-space-3);">
+        <label class="u-row" style="font-size:var(--t-meta);color:var(--m-muted);">
+          <input type="checkbox" name="activate" value="1"
+                 {% if n_active >= max_shelf %}disabled{% endif %}>
+          Put it on the shelf now
+          {% if n_active >= max_shelf %}
+          <span style="color:var(--m-muted);">— shelf is full ({{ n_active }}/{{ max_shelf }})</span>
+          {% endif %}
+        </label>
+        <button class="u-mono" type="submit"
+                style="padding:var(--m-space-2) var(--m-space-4);border:1px solid var(--m-accent);border-radius:var(--m-radius);background:transparent;color:var(--m-ink);cursor:pointer;">
+          Create focus
+        </button>
+      </div>
+    </form>
+  </div>
+
+</div>
+{% endblock %}

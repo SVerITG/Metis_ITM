@@ -1,0 +1,88 @@
+[project]
+name = "metis-mcp-server"
+version = "1.0.0"
+description = "A research companion for Claude that keeps your data on your machine: your library, notes and memory never leave your computer; answers are cited from your own indexed library; 30+ specialist skills; automatic cross-pollination across papers, meetings, ideas, notes and journal; and a weekly self-review that drafts improvements for your approval. Reasoning runs on the Claude API."
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "mcp>=1.27.0,<2",
+    "pyyaml>=6.0",
+    "requests>=2.28",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
+    "httpx>=0.28.0",
+    # Use the operating system's certificate store, so networks that inspect
+    # HTTPS (re-signing it with an institutional certificate) do not break downloads.
+    "truststore>=0.10",
+    # Phase 5 — vector memory (fastembed is optional — see [embedding] extra)
+    "sqlite-vec>=0.1.9",
+    "onnxruntime>=1.20",
+    "tokenizers>=0.20",
+    # Phase 6 — encryption
+    "cryptography>=42.0",
+    # Phase 7 / data analyst
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "pyreadstat>=1.2",
+    # Phase L — PDF knowledge indexing. PyMuPDF is the PRIMARY extractor (robust,
+    # per-page, rescues image-heavy PDFs); pdfminer-six is the fallback. Required
+    # for the knowledge layer to index PDFs at all.
+    "pymupdf>=1.24",
+    "pdfminer-six>=20240706",
+    # Phase 8.8 — content scan
+    "feedparser>=6.0",
+    # Phase 10 — Zotero/library connector
+    "pyzotero>=1.5",
+    "scikit-learn>=1.4",
+    # Phase 12 — Claude API access for morning brief, LLM fact extraction,
+    # and any agent that talks to Anthropic directly. Pinned so fresh installs
+    # never silently lose this capability.
+    "anthropic>=0.40",
+    # Optional integrations (comment out if not needed)
+    "google-genai>=1.0",
+    "twilio>=9.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "beautifulsoup4>=4.12"]
+# Office documents — slide decks, posters and letters filled into the
+# researcher's own .pptx/.potx/.docx templates (authoring tools). Without it
+# those tools answer with the install line instead of a file.
+office = ["python-pptx>=1.0", "python-docx>=1.1"]
+# Neural embedding — REQUIRED for all semantic search, RAG, and the knowledge
+# layer (search_pdf_knowledge, vector memory). Pulls ~200 MB of ONNX models (no
+# GPU). setup-mcp.sh installs this by default; without it, semantic search is off.
+embedding = ["fastembed>=0.8.0"]
+# PaperQA2 — ask_library / extract_structured (full-text Q&A over the PDF library).
+# Heavier; ask_library degrades gracefully without it.
+library = ["paper-qa>=5.0"]
+# OCR fallback — Tesseract for image-only / scanned PDFs (~1% of a typical
+# library, but they index as blank without it). Light + CPU-only — deliberately
+# NOT PaddleOCR (which pulls a full DL framework). Also needs the system binary:
+#   Ubuntu: sudo apt install tesseract-ocr   ·   macOS: brew install tesseract
+ocr = ["pytesseract>=0.3.10", "pillow>=10.0"]
+# Voice capture — faster-whisper for local transcription, resemblyzer for speaker
+# identification (GE2E voice embeddings). GPU optional but accelerates both.
+voice = [
+    "faster-whisper>=1.0",
+    "resemblyzer>=0.1.3",
+    "sounddevice>=0.4",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "soundfile>=0.12",
+]
+# Speaker diarization — requires a gated HuggingFace model (HF_TOKEN needed).
+# Not installed by default; add with: pip install -e ".[diarization]"
+diarization = [
+    "torchaudio>=2.0",
+    "pyannote.audio>=4.0",
+]
+# Voxtral cloud transcription backend — requires MISTRAL_API_KEY env var.
+# No extra pip deps; uses httpx (already a core dependency).
+
+[project.scripts]
+metis-mcp = "metis_mcp.server:run"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,68 @@
+{% from "partials/_section.html" import sec_label %}
+{#- today_whats_new.html — what arrived in News and in Library, side by side.
+
+    Reported 2026-08-31: "Quick overview of what is new in News and what is new in
+    Library next to each other windows."
+
+    Two sources, one question, so they belong beside each other rather than
+    stacked half a screen apart. Deliberately SHORT — three lines each. This is
+    a glance that tells you whether to go and look, not a place to read from;
+    the surfaces themselves are one click away and are built for reading.
+
+    Both panels are the same shape on purpose, so the eye compares them rather
+    than learning each. -#}
+{#- THE PANELS CARRY THE NAMES, not a heading above them. the researcher, 2026-08-31:
+    "'What changed in your field yesterday' and 'New in your fiedl'." — two
+    names for the two windows he had just asked to sit side by side, which is
+    also the reading that makes them non-redundant: one is what MOVED out
+    there, the other is what ARRIVED here. A single heading over both had to
+    fall back to labelling each panel by its source, so neither said what its
+    number meant. -#}
+<div class="today-pair u-mb-6">
+
+  <div class="panel wn-card">
+    <div class="wn-card-head">
+      <span class="m-sec">What changed in your field yesterday</span>
+      <a class="wn-count" href="/news" title="Open the News surface — {{ news_new }} unseen">
+        <span class="num-lead tnum">{{ news_new }}</span>
+        <span class="wn-unit">new</span>
+      </a>
+    </div>
+    {% if news %}
+    <ul class="wn-list">
+      {% for n in news %}
+      <li><a class="wn-item hov-ink" href="/news">{{ n.label }}</a>
+          <span class="wn-meta">{{ n.item_count }} report{{ '' if n.item_count == 1 else 's' }}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="wn-empty">Nothing new since yesterday.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel wn-card">
+    <div class="wn-card-head">
+      <span class="m-sec">New in your field</span>
+      {#- Land on the New panel, not the bare tab: the figure promises "62 new"
+          and the tab opens on whatever was last selected. -#}
+      <a class="wn-count" href="/knowledge#libpanel-new" title="Open the Library's New papers — {{ lib_new }} not yet read">
+        <span class="num-lead tnum">{{ lib_new }}</span>
+        <span class="wn-unit">new</span>
+      </a>
+    </div>
+    {% if papers %}
+    <ul class="wn-list">
+      {% for p in papers %}
+      {#- One row, one paper. `link` is its DOI, or the source URL when there is
+          no DOI recorded — which is 63% of this table. -#}
+      <li>{% if p.link %}<a class="wn-item hov-ink" href="{{ p.link }}" target="_blank" rel="noopener">{{ p.title | sci }}</a>
+          {%- else %}<a class="wn-item hov-ink" href="/knowledge#libpanel-new">{{ p.title | sci }}</a>{% endif %}
+          <span class="wn-meta">{{ p.journal or p.feed_name or '—' }}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="wn-empty">No new papers since yesterday.</p>
+    {% endif %}
+  </div>
+
+</div>

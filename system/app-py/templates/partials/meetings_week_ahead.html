@@ -1,0 +1,18 @@
+<div class="panel u-mb-4">
+  {% if meetings %}
+    {% for m in meetings %}
+    <div style="padding:14px 18px;{% if not loop.last %}border-bottom:1px solid var(--m-rule-soft);{% endif %}border-left:2px solid transparent;">
+      <div class="u-label u-mb-1" style="letter-spacing:0.2em;">{{ m.date[:10] if m.date else '—' }}</div>
+      <div class="u-title">{{ m.title or 'Meeting' }}</div>
+      {% if m.participants %}
+      <div class="u-ed" style="font-size:var(--t-meta);margin-top:var(--m-space-1);">{{ m.participants | clip(50) }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+  {#- Deliberately the shortest of the three "no meetings" states on this
+    surface: it sits directly beneath one that already carries the totals and
+    the buttons, so repeating them here would be the same sentence twice. -#}
+<div class="empty-row">The week is clear.</div>
+  {% endif %}
+</div>

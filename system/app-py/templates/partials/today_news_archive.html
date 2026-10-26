@@ -1,0 +1,89 @@
+<div>
+  <h2 class="sec-label u-mb-2">
+    News radar
+    <span class="sec-label-tail">{{ news_briefs|length }} SIGNALS</span>
+  </h2>
+  <div class="panel">
+    <!-- Category chip strip -->
+    {% if categories %}
+    <div class="chip-strip">
+      <button class="chip-btn chip-btn--on" onclick="filterNews(this, 'ALL')">ALL</button>
+      {% for cat in categories %}
+      <button class="chip-btn" onclick="filterNews(this, '{{ cat|e }}')">{{ cat }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Feed rows with signal badges + summaries -->
+    {% if news_briefs %}
+      {% for brief in news_briefs %}
+      <div class="feed-row feed-row--compact m-edge-left u-rule" data-cat="{{ (brief.domain or 'General')|upper }}"
+           style="padding:var(--m-space-2) 0 var(--m-space-2) var(--m-space-3);position:relative;">
+        <div class="u-row" style="gap:var(--m-space-2);margin-bottom:var(--m-space-1);">
+          {% if brief.signal %}
+          <span class="signal-dot signal-dot-{{ brief.signal }}"
+                aria-label="{{ brief.signal|capitalize }} signal"
+                title="{{ brief.signal }} signal"></span>
+          {% endif %}
+          {% if brief.domain %}
+          <span class="u-label u-label--accent u-fixed" style="letter-spacing:0.1em;white-space:nowrap;">{{ (brief.domain)|upper }}</span>
+          {% endif %}
+          {% if brief.age_label %}
+          <span class="u-label u-fixed" style="white-space:nowrap;">{{ brief.age_label }}</span>
+          {% endif %}
+        </div>
+        <a class="feed-title" href="{{ brief.source_url or '#' }}" target="_blank" rel="noopener"
+           style="font-size:13px;line-height:1.4;color:var(--m-ink);text-decoration:none;display:block;margin-bottom:{% if brief.summary %}3px{% else %}0{% endif %};">
+          {{ brief.title or 'Untitled' }}
+        </a>
+        {% if brief.summary %}
+        <div class="u-mb-1" style="font-size:var(--t-meta);color:var(--m-muted);line-height:1.45;">
+          {{ brief.summary }}{% if brief.summary|length >= 160 %}…{% endif %}
+        </div>
+        {% endif %}
+        <button class="u-label btn btn--ghost hov-ink" onclick='searchLibraryFor({{ brief.title | tojson }})' style="padding:0;letter-spacing:0.08em;transition:color 120ms;" title="Search your library for related papers">
+          Search library →
+        </button>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-row" style="padding:var(--m-space-5);text-align:center;">
+        <div class="u-label u-mb-2">No signals yet</div>
+        <div style="font-size:var(--t-meta);color:var(--m-muted);">Run a content scan to populate the news radar.</div>
+      </div>
+    {% endif %}
+
+    {% if total_count and total_count > news_briefs|length %}
+    <div class="u-rule-t" style="padding:var(--m-space-2) var(--m-space-4) var(--m-space-3);text-align:right;">
+      <a class="u-label u-label--accent" hx-get="/api/tab/news" hx-target="#tab-content" hx-swap="innerHTML" hx-push-url="/news"
+         onclick="setNavActive(document.querySelector('.nav-item[data-tab=\'news\']'),'news')"
+         style="letter-spacing:0.14em;text-decoration:none;cursor:pointer;border:none;">
+        ALL {{ total_count }} SIGNALS →
+      </a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+function filterNews(btn, cat) {
+  btn.closest('.chip-strip').querySelectorAll('.chip-btn').forEach(b => b.classList.remove('chip-btn--on'));
+  btn.classList.add('chip-btn--on');
+  const rows = btn.closest('.panel').querySelectorAll('.feed-row');
+  rows.forEach(row => {
+    row.style.display = (cat === 'ALL' || row.dataset.cat === cat) ? '' : 'none';
+  });
+}
+
+function searchLibraryFor(title) {
+  // Extract the first 4-5 meaningful words as search query
+  const words = (title || '').replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w => w.length > 3);
+  const query = words.slice(0, 4).join(' ');
+  const input = document.getElementById('global-search-input');
+  if (input) {
+    input.value = query;
+    input.dispatchEvent(new Event('keyup', {bubbles: true}));
+    input.focus();
+  }
+}
+</script>

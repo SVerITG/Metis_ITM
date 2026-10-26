@@ -1,0 +1,203 @@
+<!-- learning_courses.html — Editorial course cards with detailed progress -->
+{% if not courses %}
+<div class="panel panel-pad" style="grid-column:1/-1;text-align:center;padding:var(--m-space-6) var(--m-space-5);border:1px dashed var(--m-line);">
+  <h4 class="ed" style="margin:0 0 var(--m-space-2);font-size:var(--t-h4);">No active courses</h4>
+  <p class="ed" style="font-size:var(--t-body);color:var(--m-muted);margin:0 0 var(--m-space-4);max-width:480px;margin-left:auto;margin-right:auto;">
+    Pick a course idea from the catalog below and click <em>Build</em>, or ask Metis to build a course on a topic.
+  </p>
+</div>
+{% else %}
+{% for c in courses %}
+<div class="panel panel-pad course-card u-col" style="padding:var(--m-space-5) var(--m-space-5);gap:var(--m-space-3);" id="course-card-{{ c.id }}">
+
+  <!-- Kicker -->
+  <div class="kicker" style="color:{% if c.status == 'building' %}var(--m-ochre){% elif c.status == 'active' %}var(--m-accent){% else %}var(--m-muted){% endif %};">
+    {% if c.status == 'building' %}
+    <span>{{ (c.category or 'COURSE')|upper }} · BUILDING</span>
+    {% else %}
+    <span>{{ (c.category or 'COURSE')|upper }} · {{ (c.status or 'in progress')|upper }}</span>
+    {% endif %}
+  </div>
+
+  <!-- Title -->
+  <div class="u-title u-title--lg" style="font-weight:500;line-height:1.25;">{{ c.title }}</div>
+
+  {% if c.status == 'building' %}
+  <!-- Build pipeline progress -->
+  {% set step = c.build_step|default(1)|int %}
+  {% set step_labels = {1: 'Intake', 2: 'Scope', 3: 'Harvest', 4: 'Design', 5: 'Draft', 6: 'Review', 7: 'Publish'} %}
+  <div class="todo-meta" style="margin:0;">
+    STEP {{ step }} OF 7 · {{ step_labels.get(step, 'INTAKE') | upper }}
+  </div>
+  <div style="display:flex;gap:var(--m-space-1);margin-top:var(--m-space-1);">
+    {% for s in range(1, 8) %}
+    <div style="flex:1;height:5px;border-radius:2px;
+                background:{% if s <= step %}var(--m-ochre){% else %}var(--m-surface-3){% endif %};"></div>
+    {% endfor %}
+  </div>
+  <div class="u-ed" style="font-size:var(--t-small);margin-top:var(--m-space-1);line-height:1.4;">
+    This course is being built. Open Claude Desktop to continue the build pipeline.
+  </div>
+  {% else %}
+  <!-- Progress bar + module count -->
+  {% if c.total_modules %}
+  <div class="todo-meta" style="margin:0;">
+    MODULE {{ c.completed_modules or 0 }} OF {{ c.total_modules }} &nbsp;·&nbsp; {{ (c.progress_pct or 0)|int }}% COMPLETE
+  </div>
+  {% else %}
+  <div class="todo-meta" style="margin:0;">{{ (c.progress_pct or 0)|int }}% COMPLETE</div>
+  {% endif %}
+  <div style="height:7px;background:var(--m-surface-3);border-radius:var(--m-radius);" role="progressbar" aria-valuenow="{{ (c.progress_pct or 0)|int }}" aria-valuemin="0" aria-valuemax="100" aria-label="{{ c.title }} progress">
+    <div style="height:100%;width:{{ (c.progress_pct or 0)|int }}%;background:var(--m-accent);border-radius:4px;transition:width 600ms ease;min-width:{% if (c.progress_pct or 0)|int > 0 %}4px{% else %}0{% endif %};"></div>
+  </div>
+  {% endif %}
+
+  <!-- Last completed lesson -->
+  {% if c.current_lesson %}
+  <div class="u-row u-row--top" style="margin-top:var(--m-space-1);">
+    <span class="u-label" style="white-space:nowrap;padding-top:2px;">LAST</span>
+    <span style="font-size:var(--t-small);color:var(--m-muted);line-height:1.4;">{{ c.current_lesson }}</span>
+  </div>
+  {% endif %}
+
+  <!-- Next lesson -->
+  {% if c.next_lesson %}
+  <div class="u-row u-row--top">
+    <span class="u-label u-label--accent" style="letter-spacing:0.1em;white-space:nowrap;padding-top:2px;">NEXT</span>
+    <span style="font-size:var(--t-small);font-weight:500;color:var(--m-ink);line-height:1.4;">{{ c.next_lesson }}</span>
+  </div>
+  {% endif %}
+
+  <!-- Lesson notes -->
+  {% if c.lesson_notes %}
+  <div style="font-size:var(--t-meta);color:var(--m-muted);line-height:1.5;padding:var(--m-space-2) var(--m-space-3);background:var(--m-surface-2);border-radius:var(--m-radius);border-left:2px solid var(--m-accent-soft,var(--m-line));">
+    {{ c.lesson_notes }}
+  </div>
+  {% endif %}
+
+  <!-- Action buttons -->
+  <div style="display:flex;gap:var(--m-space-2);flex-wrap:wrap;margin-top:var(--m-space-1);">
+    {# ONE launch button. `launch_url` is validated server-side by
+       learning.py::_launch_target, so this can never open a repository, a
+       filesystem path, or anything that is not the course itself. #}
+    {#- A STOPPED COURSE OFFERS RESUME. Stopping one from the Today surface
+        pauses it rather than deleting it, so everything — lessons, cards,
+        completions — is still here; this is the control that says so. -#}
+    {% if c.status == 'paused' %}
+    <button class="btn btn--primary btn--caps"
+            hx-post="/api/today/learning/resume/{{ c.slug }}"
+            hx-target="#courses-archive" hx-swap="innerHTML"
+            title="Put {{ c.title|e }} back among your active courses">
+      Resume
+    </button>
+    {% else %}
+    <button class="btn btn--primary btn--caps"
+            onclick="openCourseSite('{{ c.launch_url|e }}','{{ c.title|e }}')"
+            title="Open {{ c.title|e }}">
+      {% if (c.progress_pct or 0) > 0 %}Continue{% else %}Start{% endif %}
+    </button>
+    {% endif %}
+    {#- The next lesson used to be repeated HERE, inside the button row, as
+        "next: <title>" — and the card already prints it above under a NEXT
+        label. So it was the same fact twice, and being variable-width text
+        among fixed controls it also made the rail wrap differently on every
+        card: three buttons on one line here, two-plus-two there. Deleted; the
+        NEXT block above is the one that stays. The row below is only ever
+        controls, which is what makes its shape predictable. -#}
+    {% if c.slug and (c.total_modules or 0) > 0 %}
+    <button class="btn btn--ghost btn--caps"
+            onclick="scheduleCourse('{{ c.slug }}','{{ c.title|e }}')"
+            title="Lay this course's remaining lessons across the Work calendar">Schedule</button>
+    {% endif %}
+    {% if c.project_id %}
+    <button class="btn btn--ghost btn--caps"
+            onclick="launchProjectTarget('{{ c.project_id }}','claude_code')"
+            title="Open in Claude Code">Claude Code</button>
+    <button class="btn btn--ghost btn--caps"
+            onclick="launchProjectTarget('{{ c.project_id }}','claude_desktop')"
+            title="Open Claude Desktop">Chat</button>
+    {% elif c.slug %}
+    <button class="btn btn--ghost btn--caps"
+            onclick="buildCourse('{{ c.slug }}')">Build</button>
+    {% endif %}
+    <button class="btn btn--ghost btn--caps"
+            onclick="toggleLessonEdit({{ c.id }})"
+            title="Edit lesson progress">Progress</button>
+  </div>
+
+  <!-- Inline lesson editor (hidden by default) -->
+  <div class="u-hide u-tile" id="lesson-edit-{{ c.id }}" style="margin-top:var(--m-space-2);padding:var(--m-space-4);">
+    <div class="u-label u-mb-3">UPDATE PROGRESS</div>
+    <div class="u-col">
+      <div>
+        <label style="font-size:var(--t-micro);color:var(--m-muted);display:block;margin-bottom:var(--m-space-1);">Last completed lesson</label>
+        <input id="last-{{ c.id }}" type="text" value="{{ c.current_lesson or '' }}"
+               style="width:100%;box-sizing:border-box;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-2) var(--m-space-2);font-size:var(--t-small);background:var(--m-surface-1);color:var(--m-ink);" aria-label="Last completed lesson">
+      </div>
+      <div>
+        <label style="font-size:var(--t-micro);color:var(--m-muted);display:block;margin-bottom:var(--m-space-1);">Next lesson</label>
+        <input id="next-{{ c.id }}" type="text" value="{{ c.next_lesson or '' }}"
+               style="width:100%;box-sizing:border-box;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-2) var(--m-space-2);font-size:var(--t-small);background:var(--m-surface-1);color:var(--m-ink);" aria-label="Next lesson">
+      </div>
+      <div>
+        <label style="font-size:var(--t-micro);color:var(--m-muted);display:block;margin-bottom:var(--m-space-1);">Course URL (localhost, if any)</label>
+        <input id="url-{{ c.id }}" type="text" value="{{ c.course_url or '' }}"
+               placeholder="e.g. http://localhost:3000"
+               style="width:100%;box-sizing:border-box;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-2) var(--m-space-2);font-size:var(--t-small);background:var(--m-surface-1);color:var(--m-ink);" aria-label="e.g. http://localhost:3000">
+      </div>
+      <div>
+        <label style="font-size:var(--t-micro);color:var(--m-muted);display:block;margin-bottom:var(--m-space-1);">Notes</label>
+        <textarea id="notes-{{ c.id }}" rows="2"
+               style="width:100%;box-sizing:border-box;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-2) var(--m-space-2);font-size:var(--t-small);background:var(--m-surface-1);color:var(--m-ink);resize:vertical;line-height:1.5;">{{ c.lesson_notes or '' }}</textarea>
+      </div>
+      <div style="display:flex;gap:var(--m-space-2);">
+        <button class="btn btn--primary btn--caps" onclick="saveLessonProgress({{ c.id }})">Save</button>
+        <button class="btn btn--ghost btn--caps" onclick="toggleLessonEdit({{ c.id }})">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endfor %}
+{% endif %}
+
+{% if truncated and truncated > 0 %}
+<div class="panel" style="margin-top:var(--m-space-3);">
+  <div class="empty-row u-mono" style="letter-spacing:0.08em;">
+    SHOWING {{ courses|length }} OF {{ n_active }} COURSES — {{ truncated }} NOT LISTED
+  </div>
+</div>
+{% endif %}
+
+<script>
+// One launch path for every course. The URL arrives already validated.
+function openCourseSite(url, title) {
+  if (!url) { showToast('No course target set.'); return; }
+  const win = window.open(url, '_blank', 'noopener');
+  if (!win) window.location.href = url;
+}
+
+// Lay a course's remaining lessons across the Work calendar as study blocks.
+function scheduleCourse(slug, title) {
+  const start = prompt(
+    `Schedule "${title}" from which date?  (YYYY-MM-DD, blank = today)`, '');
+  if (start === null) return;
+  const days = prompt(
+    'Which weekdays?  Mon=0 … Sun=6, comma separated.\ne.g. "1,3" for Tuesday and Thursday',
+    '1,3');
+  if (days === null) return;
+  const per = prompt('How many lessons per study block?', '1');
+  if (per === null) return;
+  const body = new URLSearchParams({
+    slug: slug, title: title, start_date: (start || '').trim(),
+    weekdays: (days || '1').trim(), per_slot: (per || '1').trim(),
+  });
+  fetch('/api/plan/learning/schedule', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: body.toString(),
+  }).then(r => r.json()).then(d => {
+    showToast(d.message || 'Scheduled.');
+  }).catch(() => showToast('Could not schedule — is the dashboard up to date?'));
+}
+</script>

@@ -1,0 +1,80 @@
+<!-- learning_due.html — Spaced-repetition due today, with SM-2 review + streak -->
+{% if not due %}
+<div class="kicker kicker--accent">
+  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="3 8 7 12 13 4"/>
+  </svg>
+  <span>SPACED REPETITION · CLEAR{% if streak %} · {{ streak }}-DAY STREAK{% endif %}</span>
+</div>
+<h2 style="font-family:var(--m-display);font-size:var(--t-h2);font-weight:500;letter-spacing:-0.015em;margin:var(--m-space-3) 0 var(--m-space-2);color:var(--m-ink);">
+  Nothing due today.
+</h2>
+<p class="ed" style="font-size:var(--t-body);color:var(--m-muted);margin:0 0 var(--m-space-3);">
+  {% if streak %}<em>{{ streak }}-day review streak — check back tomorrow.</em>{% else %}<em>No cards due. Add a course to start building your review deck.</em>{% endif %}
+</p>
+<a class="u-label u-label--accent" href="/tab/learning"
+   style="display:inline-flex;align-items:center;gap:var(--m-space-2);letter-spacing:0.12em;text-decoration:none;border:1px solid var(--m-accent);border-radius:var(--m-radius-sm);padding:var(--m-space-1) var(--m-space-3);transition:background 140ms ease;"
+   onmouseover="this.style.background='var(--m-accent-wash)'"
+   onmouseout="this.style.background='transparent'">
+  GO TO COURSES →
+</a>
+{# Build the deck from competencies — the review machine (SM-2, streak, heatmap) was
+   fully built but had never been given a card. This is the one-click way to fill it. #}
+<button class="btn btn--primary u-mono" hx-post="/api/learning/seed-from-competencies"
+        hx-swap="none"
+        hx-on::after-request="htmx.ajax('GET','/api/partial/learning/due-today',{target:'#sr-due-wrap',swap:'innerHTML'})"
+        style="margin-left:8px;letter-spacing:0.12em;border:1px solid var(--m-accent);padding:var(--m-space-1) var(--m-space-3);">
+  BUILD DECK FROM YOUR COMPETENCIES
+</button>
+{% else %}
+<div class="kicker kicker--accent">
+  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="4" width="12" height="9"/><line x1="2" y1="7" x2="14" y2="7"/>
+  </svg>
+  <span>SPACED REPETITION · {{ due | length }} CARD{% if due|length != 1 %}S{% endif %} THIS SESSION{% if remaining and remaining > 0 %} OF {{ total_due }}{% endif %}{% if streak %} · {{ streak }}-DAY STREAK{% endif %}</span>
+</div>
+<h2 style="font-family:var(--m-display);font-size:var(--t-h2);font-weight:500;letter-spacing:-0.015em;margin:var(--m-space-3) 0 var(--m-space-4);color:var(--m-ink);">
+  {{ due | length }} review{% if due|length != 1 %}s{% endif %} for today{% if remaining and remaining > 0 %}<span style="font-family:var(--m-mono);font-size:var(--t-meta);color:var(--m-muted);letter-spacing:0.04em;"> — {{ remaining }} more waiting; finish these and reload for the next {{ due|length }}</span>{% endif %}
+</h2>
+<div class="u-col u-mb-4" id="sr-due-list" style="gap:var(--m-space-3);max-height:280px;overflow-y:auto;">
+  {#- ONE ROW ANATOMY (.mrow). The three grading buttons keep their own colours
+      — hard / good / easy is a scale, and the colour IS the scale — but they
+      now sit in the shared actions slot, dimmed until the row is reached for,
+      like every other list in the product.
+
+      .mrow--wrap because here the title IS the content: a review question
+      truncated at one line is unanswerable. -#}
+  {% for item in due %}
+  <div class="mrow mrow--wrap row-hit" id="sr-row-{{ item.id }}">
+    <span class="mrow-state">
+      {%- if item.days_late and item.days_late > 0 -%}
+      <span class="stat tnum {{ 'is-warn' if item.days_late >= 30 else 'is-quiet' }}"
+            title="Was due {{ item.next_review_date }}">{{ item.days_late }}d late</span>
+      {%- else -%}
+      <span class="stat is-quiet">today</span>
+      {%- endif -%}
+    </span>
+    <span class="mrow-body">
+      <span class="mrow-title">{{ item.topic }}</span>
+      {% if item.course_title %}
+      <span class="mrow-meta">{{ item.course_title }} · every {{ item.interval_days }}d</span>
+      {% endif %}
+    </span>
+    <span class="mrow-acts sr-grade">
+      <button class="sr-g sr-g--hard" title="Hard — remembered with effort"
+              onclick='srReview({{ item.id | tojson }}, 3, this)'>Hard</button>
+      <button class="sr-g sr-g--good" title="Good — got it"
+              onclick='srReview({{ item.id | tojson }}, 4, this)'>Good</button>
+      <button class="sr-g sr-g--easy" title="Easy — no effort needed"
+              onclick='srReview({{ item.id | tojson }}, 5, this)'>Easy</button>
+    </span>
+  </div>
+  {% endfor %}
+</div>
+{#- "TOTAL 10 · DUE 10" printed the same number twice, always, because `due` is
+    the session and every card in it is by definition due. It said nothing. The
+    honest pair is this session against the whole backlog. -#}
+<div class="tnum u-label">
+  {{ due | length }} in this session{% if total_due %} · {{ total_due }} due in total{% endif %}{% if streak %} · {{ streak }}-day streak 🔥{% endif %}
+</div>
+{% endif %}

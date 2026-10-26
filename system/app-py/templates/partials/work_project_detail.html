@@ -1,0 +1,581 @@
+<!-- work_project_detail.html — Full project panel v2 -->
+<div class="proj-detail-overlay" id="proj-detail-overlay" onclick="if(event.target===this)closeProjectDetail()" role="button" tabindex="0">
+<div class="proj-detail-panel u-col" style="height:100%;max-height:90vh;overflow:hidden;">
+
+  {% set accent = p.accent_color or 'var(--m-accent)' %}
+  <!-- ── Banner colour strip ── -->
+  <div style="height:6px;background:{{ accent }};flex-shrink:0;"></div>
+
+  <!-- ── Header ── -->
+  <div style="display:flex;align-items:flex-start;gap:14px;padding:22px 32px 16px;border-bottom:1px solid var(--m-rule);flex-shrink:0;background:linear-gradient(to bottom, color-mix(in srgb, {{ accent }} 9%, transparent), transparent);">
+    {% if p.image_url %}
+    <img class="u-fixed" src="{{ p.image_url }}" alt="" style="width:52px;height:52px;border-radius:6px;object-fit:cover;border:1px solid var(--m-rule);">
+    {% endif %}
+    <div class="u-grow">
+      <div class="u-row" style="margin-bottom:var(--m-space-1);">
+        {% if p.domain %}
+        <span class="u-label" style="letter-spacing:0.18em;text-transform:uppercase;">{{ p.domain }}</span>
+        {% endif %}
+        <button onclick="pdSetCategory('{{ p.id }}')"
+                title="Set category"
+                style="background:color-mix(in srgb, {{ accent }} 14%, transparent);border:1px solid color-mix(in srgb, {{ accent }} 35%, transparent);
+                       border-radius:10px;padding:1px 9px;font-family:var(--m-mono);font-size:11px;letter-spacing:.08em;
+                       color:{{ accent }};cursor:pointer;">{% if p.category %}{{ p.category }}{% else %}+ category{% endif %}</button>
+      </div>
+      <h2 id="pd-title-display-{{ p.id }}"
+          style="font-family:var(--m-display);font-size:var(--t-h3);font-weight:500;letter-spacing:-0.02em;color:var(--m-ink);margin:0 0 var(--m-space-1);cursor:pointer;"
+          title="Click to rename"
+          onclick="pdStartRename('{{ p.id }}')">{{ p.title }}</h2>
+      <input class="u-mb-1 u-hide" id="pd-title-input-{{ p.id }}"
+             style="font-family:var(--m-display);font-size:var(--t-h3);font-weight:500;border:none;border-bottom:2px solid var(--m-accent);background:transparent;color:var(--m-ink);width:100%;"
+             onblur="pdSaveRename('{{ p.id }}')"
+             onkeydown="if(event.key==='Enter')pdSaveRename('{{ p.id }}');if(event.key==='Escape')pdCancelRename('{{ p.id }}')" aria-label="Project title">
+      <!-- Tags -->
+      <div id="pd-tags-{{ p.id }}" style="display:flex;flex-wrap:wrap;gap:var(--m-space-1);margin-top:var(--m-space-1);">
+        {% for tag in tags_list %}
+        <span class="chip chip--plain" style="font-size:var(--t-micro);padding:1px 7px;cursor:default;">{{ tag }}
+          <span onclick="pdRemoveTag('{{ p.id }}','{{ tag }}')" style="margin-left:4px;cursor:pointer;opacity:.6;font-size:var(--t-micro);" role="button" tabindex="0">&#10005;</span>
+        </span>
+        {% endfor %}
+        <button class="u-label" onclick="pdAddTagPrompt('{{ p.id }}')"
+                style="background:none;border:1px dashed var(--m-rule);border-radius:10px;padding:1px 8px;cursor:pointer;letter-spacing:.08em;">+ tag</button>
+      </div>
+    </div>
+    <div class="u-row u-fixed" style="gap:var(--m-space-3);">
+      <!-- Banner colour swatches -->
+      <div class="u-row" style="gap:var(--m-space-1);" title="Banner colour">
+        {% for c in ['var(--m-alert)','var(--m-warn)','var(--m-ok)','var(--m-chart-1)','var(--m-chart-5)','var(--m-chart-7)'] %}
+        <span onclick="pdSetColor('{{ p.id }}','{{ c }}')"
+              style="width:13px;height:13px;border-radius:50%;background:{{ c }};cursor:pointer;
+                     border:2px solid {% if p.accent_color == c %}var(--m-ink){% else %}transparent{% endif %};box-shadow:0 0 0 1px var(--m-rule);" role="button" tabindex="0"></span>
+        {% endfor %}
+        <span onclick="pdSetColor('{{ p.id }}','')" title="Reset to default"
+              style="width:13px;height:13px;border-radius:50%;background:var(--m-surface-2);cursor:pointer;border:1px solid var(--m-rule);font-size:var(--t-micro);line-height:11px;text-align:center;color:var(--m-muted);" role="button" tabindex="0">&#8856;</span>
+      </div>
+      {% if last_activity %}
+      <span class="u-label">{{ last_activity[:10] }}</span>
+      {% endif %}
+      <button class="btn btn--ghost" onclick="closeProjectDetail()"
+              style="font-size:var(--t-h3);color:var(--m-muted);padding:0;line-height:1;">&#10005;</button>
+    </div>
+  </div>
+
+  <!-- ── Tabs ── -->
+  <div class="u-fixed" style="display:flex;gap:0;border-bottom:1px solid var(--m-rule);padding:0 var(--m-space-6);background:var(--m-surface-1);">
+    {% for tab_id, tab_label in [('tasks','Tasks'),('figures','Figures' ~ (' · ' ~ figures|length if figures else '')),('notes','Notes'),('about','About'),('history','History')] %}
+    <button id="pd-tab-btn-{{ tab_id }}"
+            onclick="pdSwitchTab('{{ p.id }}','{{ tab_id }}')"
+            style="background:none;border:none;border-bottom:2px solid {% if tab_id=='tasks' %}var(--m-accent){% else %}transparent{% endif %};
+                   padding:10px 16px;font-family:var(--m-mono);font-size:11px;letter-spacing:0.12em;
+                   color:{% if tab_id=='tasks' %}var(--m-accent){% else %}var(--m-muted){% endif %};
+                   cursor:pointer;margin-bottom:-1px;transition:color .15s,border-color .15s;">{{ tab_label | upper }}</button>
+    {% endfor %}
+  </div>
+
+  <!-- ── Body ── -->
+  <div class="u-col u-grow" style="overflow-y:auto;padding:var(--m-space-5) var(--m-space-6);gap:var(--m-space-5);">
+
+    <!-- TASKS TAB -->
+    <div id="pd-panel-tasks" style=";">
+
+      {% if p.next_step %}
+      <div class="u-row u-mb-4" style="gap:var(--m-space-3);background:var(--m-accent-wash);border-radius:5px;padding:var(--m-space-3) var(--m-space-4);">
+        <span class="u-label u-label--accent u-fixed" style="letter-spacing:0.14em;">NEXT</span>
+        <span class="u-grow" style="font-family:var(--m-display);font-size:var(--t-small);color:var(--m-accent);line-height:1.4;">{{ p.next_step }}</span>
+        <button class="u-label u-label--accent" onclick="pdClearNextStep('{{ p.id }}')"
+                title="Mark as done"
+                style="background:none;border:1px solid var(--m-accent);border-radius:var(--m-radius);padding:var(--m-space-1) var(--m-space-2);cursor:pointer;">&#10003; Done</button>
+      </div>
+      {% endif %}
+
+      <div class="u-label u-mb-3" style="letter-spacing:0.16em;text-transform:uppercase;">
+        Open tasks <span style="color:var(--m-ink);margin-left:4px;">{{ open_count }}</span>
+      </div>
+
+      <div class="u-col u-mb-3" id="pd-task-list-{{ p.id }}" style="gap:var(--m-space-1);">
+        {% if open_tasks %}
+          {% for t in open_tasks %}
+          <div class="pd-task-row u-row" data-task-id="{{ t.task_id }}"
+               draggable="true"
+               style="padding:var(--m-space-2) var(--m-space-2);border-radius:var(--m-radius);border:1px solid transparent;">
+            <span class="u-fixed" style="cursor:grab;color:var(--m-rule);font-size:var(--t-small);user-select:none;" title="Drag to reorder">&#8919;</span>
+            <span style="font-size:11px;flex-shrink:0;color:{% if t.status == 'blocked' %}var(--m-alert){% elif t.status == 'in_progress' %}var(--m-accent){% else %}var(--m-muted){% endif %};">
+              {% if t.status == 'blocked' %}&#9679;{% elif t.status == 'in_progress' %}&#9656;{% else %}&middot;{% endif %}
+            </span>
+            <span class="pd-task-title u-grow u-title u-title--sm"
+                  style="line-height:1.35;cursor:pointer;"
+                  onclick="pdStartTaskRename(this,'{{ t.task_id }}','{{ p.id }}')"
+                  title="Click to rename" role="button" tabindex="0">{{ t.title }}</span>
+            <select class="u-label u-fixed u-tile" onchange="pdSetTaskStatus('{{ t.task_id }}','{{ p.id }}',this.value)"
+                    style="padding:var(--m-space-1) var(--m-space-1);">
+              <option value="open" {% if t.status == 'open' %}selected{% endif %}>open</option>
+              <option value="in_progress" {% if t.status == 'in_progress' %}selected{% endif %}>in progress</option>
+              <option value="blocked" {% if t.status == 'blocked' %}selected{% endif %}>blocked</option>
+            </select>
+            <button class="u-fixed btn btn--ghost" onclick="pdDetailTaskDone('{{ t.task_id }}','{{ p.id }}')"
+                    title="Mark done"
+                    style="padding:var(--m-space-1) var(--m-space-1);color:var(--m-ok);font-size:var(--t-body);line-height:1;">&#10003;</button>
+            <button class="u-fixed btn btn--ghost" onclick="pdDetailTaskDelete('{{ t.task_id }}','{{ p.id }}')"
+                    title="Delete task"
+                    style="padding:var(--m-space-1) var(--m-space-1);color:var(--m-muted);font-size:var(--t-meta);line-height:1;opacity:.5;"
+                    onmouseenter="this.style.opacity='1';this.style.color='var(--m-alert)'"
+                    onmouseleave="this.style.opacity='.5';this.style.color='var(--m-muted)'">&#10005;</button>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="u-label" style="padding:var(--m-space-2) 0;">No open tasks.</div>
+        {% endif %}
+      </div>
+
+      <div class="u-row u-rule-t" style="padding-top:8px;">
+        <input class="u-grow u-title u-title--sm u-tile" id="pd-new-task-{{ p.id }}" type="text" placeholder="Add a task…"
+               onkeydown="if(event.key==='Enter')pdDetailAddTask('{{ p.id }}')"
+               style="padding:var(--m-space-2) var(--m-space-3);" aria-label="Add a task">
+        <select class="u-label u-tile" id="pd-new-task-cat-{{ p.id }}"
+                style="padding:var(--m-space-2) var(--m-space-2);">
+          <option value="general">general</option>
+          <option value="urgent">urgent</option>
+          <option value="research">research</option>
+          <option value="writing">writing</option>
+          <option value="code">code</option>
+          <option value="review">review</option>
+        </select>
+        {# Due date — optional, and the reason every date view was empty. Zero of
+           105 tasks had one because nothing ever asked for it. #}
+        <input class="u-label u-tile" id="pd-new-task-due-{{ p.id }}" type="date" title="Due date (optional)"
+               style="padding:var(--m-space-1) var(--m-space-2);" aria-label="Due date for the new task">
+        <button class="btn btn--primary u-mono" onclick="pdDetailAddTask('{{ p.id }}')"
+                style="border:none;padding:var(--m-space-2) var(--m-space-4);white-space:nowrap;">Add task</button>
+      </div>
+
+      {% if done_tasks %}
+      <div style="margin-top:var(--m-space-5);">
+        <button class="u-label u-row btn btn--ghost" onclick="pdToggleDoneArchive('{{ p.id }}')"
+                style="padding:0;letter-spacing:0.16em;text-transform:uppercase;">
+          <span id="pd-done-chevron-{{ p.id }}">&#9656;</span>
+          Done &amp; archived &mdash; {{ done_tasks | length }} tasks
+        </button>
+        <div class="u-hide" id="pd-done-archive-{{ p.id }}" style="margin-top:var(--m-space-3);border-left:2px solid var(--m-rule-soft);padding-left:12px;">
+          {% for t in done_tasks %}
+          <div class="u-rule" style="display:flex;align-items:baseline;gap:var(--m-space-3);padding:var(--m-space-1) 0;">
+            <span class="u-fixed u-mono" style="color:var(--m-ok);">&#10003;</span>
+            <span class="u-grow" style="font-family:var(--m-display);font-size:var(--t-meta);color:var(--m-muted);text-decoration:line-through;opacity:.7;">{{ t.title }}</span>
+            {% if t.updated_at %}
+            <span class="u-label u-fixed">{{ t.updated_at[:10] }}</span>
+            {% endif %}
+            <button class="u-label u-label--accent btn btn--ghost" onclick="pdRestoreTask('{{ t.task_id }}','{{ p.id }}')"
+                    title="Restore to open"
+                    style="padding:0 var(--m-space-1);opacity:.7;">&#8617;</button>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+    </div><!-- /tasks -->
+
+    <!-- FIGURES TAB — visuals saved from a chat with save_project_figure -->
+    <div class="u-hide" id="pd-panel-figures">
+      {% if figures %}
+        {% for f in figures %}
+        <div class="panel panel-pad u-mb-4 panel--md">
+          <div class="u-row u-mb-2" style="gap:var(--m-space-3);align-items:baseline;">
+            <span class="u-grow u-title">{{ f.title }}</span>
+            {% if f.saved_at %}<span class="u-label u-fixed">{{ f.saved_at }}</span>{% endif %}
+            <a class="u-label u-label--accent u-fixed" href="{{ f.url }}" target="_blank" rel="noopener">Open full size &#8599;</a>
+          </div>
+          {% if f.caption %}
+          <div class="u-ed u-mb-3" style="font-size:var(--t-small);line-height:1.5;">{{ f.caption }}</div>
+          {% endif %}
+          <iframe src="{{ f.url }}" title="{{ f.title }}" loading="lazy"
+                  sandbox="allow-scripts allow-popups"
+                  style="width:100%;height:520px;border:1px solid var(--m-rule);border-radius:var(--m-radius);background:#fff;"></iframe>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-3) 0;">
+          No figures yet. Ask Claude to draw one for this project and save it here.
+        </div>
+      {% endif %}
+    </div><!-- /figures -->
+
+    <!-- NOTES TAB -->
+    <div class="u-hide" id="pd-panel-notes">
+      <div class="u-mb-5">
+        <div class="u-label u-mb-2" style="letter-spacing:.14em;">NEW NOTE</div>
+        <textarea class="u-title u-title--sm u-tile" id="pd-note-input-{{ p.id }}" rows="3"
+                  placeholder="Write a note linked to this project…"
+                  style="width:100%;box-sizing:border-box;line-height:1.6;padding:var(--m-space-3) var(--m-space-3);resize:vertical;"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:var(--m-space-2);">
+          <button class="btn btn--primary u-mono" onclick="pdSaveNote('{{ p.id }}')"
+                  style="border:none;padding:var(--m-space-2) var(--m-space-4);">Save note</button>
+        </div>
+      </div>
+      <div id="pd-notes-list-{{ p.id }}">
+        {% if linked_notes %}
+          {% for n in linked_notes %}
+          <div class="panel panel-pad u-mb-3 panel--md" style="position:relative;" data-note-id="{{ n.note_id }}">
+            <div class="u-label u-mb-2" style="letter-spacing:.1em;">{{ n.created_at[:10] }} &middot; NOTE</div>
+            <div class="u-title u-title--sm" style="line-height:1.6;white-space:pre-wrap;">{{ n.content }}</div>
+            <button class="btn btn--ghost" onclick="pdDeleteNote('{{ n.note_id }}','{{ p.id }}')"
+                    style="position:absolute;top:10px;right:10px;font-size:var(--t-meta);color:var(--m-muted);opacity:.5;padding:var(--m-space-1) var(--m-space-1);"
+                    onmouseenter="this.style.opacity='1'"
+                    onmouseleave="this.style.opacity='.5'">&#10005;</button>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-3) 0;">
+            No notes yet. Notes written here also appear in the Thinking tab.
+          </div>
+        {% endif %}
+      </div>
+    </div><!-- /notes -->
+
+    <!-- ABOUT TAB -->
+    <div class="u-hide" id="pd-panel-about">
+      <div class="u-col" style="gap:var(--m-space-4);">
+        <div>
+          <div class="u-label u-mb-2" style="letter-spacing:.14em;">DESCRIPTION</div>
+          <textarea class="u-title u-title--sm u-tile" id="pd-desc-{{ p.id }}" rows="3"
+                    style="width:100%;box-sizing:border-box;line-height:1.6;padding:var(--m-space-2) var(--m-space-3);resize:vertical;">{{ p.description or '' }}</textarea>
+        </div>
+        <div style="display:flex;gap:var(--m-space-4);flex-wrap:wrap;">
+          <div class="u-grow" style="min-width:140px;">
+            <div class="u-label" style="letter-spacing:.14em;margin-bottom:var(--m-space-1);">STARTED</div>
+            <input class="u-tile" type="date" id="pd-started-{{ p.id }}" value="{{ p.started_at[:10] if p.started_at else '' }}"
+                   style="font-family:var(--m-mono);font-size:var(--t-meta);padding:var(--m-space-2) var(--m-space-2);color:var(--m-ink);width:100%;box-sizing:border-box;" aria-label="Date started">
+          </div>
+          <div class="u-grow" style="min-width:140px;">
+            <div class="u-label" style="letter-spacing:.14em;margin-bottom:var(--m-space-1);">COMPLETED / ENDED</div>
+            <input class="u-tile" type="date" id="pd-completed-{{ p.id }}" value="{{ p.completed_at[:10] if p.completed_at else '' }}"
+                   style="font-family:var(--m-mono);font-size:var(--t-meta);padding:var(--m-space-2) var(--m-space-2);color:var(--m-ink);width:100%;box-sizing:border-box;" aria-label="Date completed">
+          </div>
+          <div class="u-grow" style="min-width:140px;">
+            <div class="u-label" style="letter-spacing:.14em;margin-bottom:var(--m-space-1);">STATUS</div>
+            <select class="u-mono u-tile" id="pd-status-{{ p.id }}"
+                    style="padding:var(--m-space-2) var(--m-space-2);color:var(--m-ink);width:100%;">
+              <option value="active" {% if p.status=='active' %}selected{% endif %}>Active</option>
+              <option value="paused" {% if p.status=='paused' %}selected{% endif %}>Paused</option>
+              <option value="completed" {% if p.status=='completed' %}selected{% endif %}>Completed</option>
+              <option value="archived" {% if p.status=='archived' %}selected{% endif %}>Archived</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <div class="u-label" style="letter-spacing:.14em;margin-bottom:var(--m-space-1);">PROJECT IMAGE URL (optional)</div>
+          <input class="u-mono u-tile" type="url" id="pd-image-{{ p.id }}" value="{{ p.image_url or '' }}"
+                 placeholder="https://… or leave blank"
+                 style="width:100%;box-sizing:border-box;padding:var(--m-space-2) var(--m-space-3);color:var(--m-ink);" aria-label="https://… or leave blank">
+        </div>
+        <div>
+          <div class="u-row u-mb-2">
+            <div class="u-label" style="letter-spacing:.14em;">CONTEXT FOR CLAUDE</div>
+            <button class="btn btn--sec u-mono" id="ctx-copy-btn-{{ p.id }}" onclick="copyProjectContext('{{ p.id }}')"
+                    style="margin-left:auto;padding:var(--m-space-1) var(--m-space-2);letter-spacing:0.1em;color:var(--m-text);">COPY</button>
+          </div>
+          <textarea class="u-title u-title--sm u-tile" id="ctx-textarea-{{ p.id }}" rows="5"
+                    style="width:100%;box-sizing:border-box;line-height:1.65;padding:var(--m-space-3) var(--m-space-3);resize:vertical;"
+                    placeholder="Goals, background, key decisions, stakeholders…">{{ p.context_doc or '' }}</textarea>
+        </div>
+        <div style="display:flex;gap:var(--m-space-2);padding-top:4px;">
+          <button class="btn btn--primary u-mono" onclick="pdSaveAbout('{{ p.id }}')"
+                  style="border:none;padding:var(--m-space-2) var(--m-space-5);letter-spacing:.06em;">Save</button>
+          {% if p.github_url %}
+          <a class="btn btn--ghost btn--caps" href="{{ p.github_url }}" target="_blank" rel="noopener" style="padding:var(--m-space-2) var(--m-space-4);">GitHub &#8599;</a>
+          {% endif %}
+          {% if p.external_path %}
+          <button class="btn btn--ghost btn--caps"
+                  onclick="closeProjectDetail();launchProjectTarget('{{ p.id }}','explorer')"
+                  style="padding:var(--m-space-2) var(--m-space-4);">Open Folder</button>
+          {% endif %}
+        </div>
+      </div>
+    </div><!-- /about -->
+
+    <!-- HISTORY TAB -->
+    <div class="u-hide" id="pd-panel-history">
+      {% if history_entries %}
+        {% for e in history_entries %}
+        <div class="u-rule" style="display:flex;gap:var(--m-space-4);padding:var(--m-space-2) 0;">
+          <span class="u-label u-fixed" style="min-width:74px;padding-top:3px;">{{ e.date }}</span>
+          <span class="u-grow u-title u-title--sm" style="line-height:1.4;">{{ e.summary }}</span>
+          <span class="u-label u-fixed" style="padding-top:3px;">{{ e.get('author','') }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-3) 0;">No history yet.</div>
+      {% endif %}
+      <div style="margin-top:var(--m-space-5);padding-top:16px;border-top:1px solid var(--m-rule);">
+        <div class="u-label u-mb-2" style="letter-spacing:.14em;">LOG A SESSION NOTE</div>
+        <div style="display:flex;gap:var(--m-space-2);">
+          <input class="u-grow u-title u-title--sm u-tile" id="pd-history-input-{{ p.id }}" type="text" placeholder="What did you work on?"
+                 onkeydown="if(event.key==='Enter')pdLogHistory('{{ p.id }}')"
+                 style="padding:var(--m-space-2) var(--m-space-3);" aria-label="What did you work on?">
+          <button class="u-label" onclick="pdLogHistory('{{ p.id }}')"
+                  style="background:none;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-2) var(--m-space-4);cursor:pointer;">Log</button>
+        </div>
+      </div>
+    </div><!-- /history -->
+
+    {# Ambient cross-pollination — what across your whole corpus relates to this
+       project. Lazy-loaded so opening the panel stays instant. This is the
+       README's core promise, shown where it's useful instead of in a tab. #}
+    <div style="padding:0 var(--m-space-5) var(--m-space-4);"
+         hx-get="/api/partial/connections/project/{{ p.id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div class="skeleton skeleton-box" style="height:90px;border-radius:8px;"></div>
+    </div>
+
+  </div><!-- /body -->
+</div><!-- /panel -->
+</div><!-- /overlay -->
+
+<script>
+(function(){
+  var _pid = '{{ p.id }}';
+
+  window.pdSwitchTab = function(pid, tab) {
+    ['tasks','figures','notes','about','history'].forEach(function(t) {
+      var panel = document.getElementById('pd-panel-' + t);
+      var btn   = document.getElementById('pd-tab-btn-' + t);
+      if (!panel || !btn) return;
+      var active = (t === tab);
+      // .u-hide is display:none !important, so an inline display alone never
+      // revealed a panel that started hidden; toggle the class as well.
+      panel.classList.toggle('u-hide', !active);
+      panel.style.display = active ? '' : 'none';
+      btn.style.borderBottomColor = active ? 'var(--m-accent)' : 'transparent';
+      btn.style.color = active ? 'var(--m-accent)' : 'var(--m-muted)';
+    });
+  };
+
+  window.pdStartRename = function(pid) {
+    var d = document.getElementById('pd-title-display-' + pid);
+    var i = document.getElementById('pd-title-input-' + pid);
+    if (!d || !i) return;
+    i.value = d.textContent.trim();
+    d.style.display = 'none'; i.style.display = ''; i.focus(); i.select();
+  };
+  window.pdSaveRename = function(pid) {
+    var d = document.getElementById('pd-title-display-' + pid);
+    var i = document.getElementById('pd-title-input-' + pid);
+    if (!d || !i) return;
+    var title = i.value.trim();
+    if (title && title !== d.textContent.trim()) {
+      fetch('/api/project/' + pid + '/meta', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title})});
+      d.textContent = title;
+    }
+    d.style.display = ''; i.style.display = 'none';
+  };
+  window.pdCancelRename = function(pid) {
+    var d = document.getElementById('pd-title-display-' + pid);
+    var i = document.getElementById('pd-title-input-' + pid);
+    if (d) d.style.display = ''; if (i) i.style.display = 'none';
+  };
+
+  window.pdAddTagPrompt = function(pid) {
+    var tag = prompt('New tag:');
+    if (!tag || !tag.trim()) return;
+    pdModifyTags(pid, function(tags){ tags.push(tag.trim()); return tags; });
+  };
+  window.pdRemoveTag = function(pid, tag) {
+    pdModifyTags(pid, function(tags){ return tags.filter(function(t){return t!==tag;}); });
+  };
+  function pdModifyTags(pid, fn) {
+    var chips = document.querySelectorAll('#pd-tags-' + pid + ' .chip--plain');
+    var current = Array.from(chips).map(function(c){return c.firstChild.textContent.trim();}).filter(Boolean);
+    var updated = fn(current);
+    fetch('/api/project/' + pid + '/meta', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({tags: updated.join(', ')})
+    }).then(function(){
+      var zone = document.getElementById('pd-tags-' + pid);
+      if (!zone) return;
+      var addBtn = zone.querySelector('button');
+      var html = updated.map(function(t){
+        return '<span class="chip chip--plain" style="font-size:var(--t-micro);padding:1px 7px;">' + t.replace(/</g,'&lt;') +
+          '<span onclick="pdRemoveTag(\'' + pid + '\',\'' + t.replace(/'/g,"\\'") + '\')" style="margin-left:4px;cursor:pointer;opacity:.6;font-size:var(--t-micro);" role="button" tabindex="0">&#10005;</span></span>';
+      }).join('');
+      zone.innerHTML = html + (addBtn ? addBtn.outerHTML : '');
+    });
+  }
+
+  window.pdClearNextStep = function(pid) {
+    fetch('/api/project/' + pid + '/next-step/clear', {method:'POST'}).then(function(){
+      var banner = document.querySelector('#pd-panel-tasks [style*="accent-wash"]');
+      if (banner) banner.remove();
+      showToast('Next step cleared');
+    });
+  };
+
+  window.pdDetailTaskDone = function(taskId, pid) {
+    fetch('/api/task/' + taskId + '/done', {method:'POST'}).then(function(){
+      var row = document.querySelector('[data-task-id="' + taskId + '"]');
+      if (row) { row.style.opacity='0.3'; setTimeout(function(){ row.remove(); },400); }
+      showToast('Task done &#10003;');
+    });
+  };
+  window.pdDetailTaskDelete = function(taskId, pid) {
+    if (!confirm('Delete this task?')) return;
+    fetch('/api/task/' + taskId + '/delete', {method:'POST'}).then(function(){
+      var row = document.querySelector('[data-task-id="' + taskId + '"]');
+      if (row) row.remove();
+    });
+  };
+  window.pdSetTaskStatus = function(taskId, pid, status) {
+    fetch('/api/task/' + taskId + '/status', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})});
+  };
+  window.pdStartTaskRename = function(span, taskId, pid) {
+    var inp = document.createElement('input');
+    var was = span.textContent.trim();
+    inp.value = was;
+    inp.style.cssText = 'flex:1;font-family:var(--m-display);font-size:13px;border:none;border-bottom:1px solid var(--m-accent);background:transparent;color:var(--m-ink);';
+    span.replaceWith(inp); inp.focus(); inp.select();
+    function save() {
+      var title = inp.value.trim();
+      // The response is CHECKED. This used to fire and forget, so a rename the
+      // server rejected still showed the new title on screen — the interface
+      // reporting a success it had no evidence for, which is the one kind of
+      // wrong a user cannot see.
+      var shown = title || was;
+      if (title && title !== was) {
+        fetch('/api/task/'+taskId+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title})})
+          .then(function(r){ if (!r.ok) throw new Error('rejected'); })
+          .catch(function(){
+            var el = document.getElementById('pd-task-title-'+taskId);
+            if (el) el.textContent = was;
+            if (typeof showToast === 'function') showToast('That rename was not saved.');
+          });
+      }
+      var ns = document.createElement('span');
+      ns.className = 'pd-task-title';
+      ns.id = 'pd-task-title-' + taskId;
+      ns.style.cssText = 'flex:1;font-family:var(--m-display);font-size:13px;color:var(--m-ink);line-height:1.35;cursor:pointer;';
+      ns.title = 'Click to rename'; ns.textContent = shown;
+      ns.onclick = function(){ pdStartTaskRename(ns, taskId, pid); };
+      inp.replaceWith(ns);
+    }
+    inp.addEventListener('blur', save);
+    inp.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key==='Escape') inp.blur(); });
+  };
+  window.pdDetailAddTask = function(pid) {
+    var titleEl = document.getElementById('pd-new-task-' + pid);
+    var catEl   = document.getElementById('pd-new-task-cat-' + pid);
+    var dueEl   = document.getElementById('pd-new-task-due-' + pid);
+    var title   = titleEl ? titleEl.value.trim() : '';
+    if (!title) { if (titleEl) titleEl.focus(); return; }
+    fetch('/api/task/create', {method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({project_id:pid, title:title,
+                           category: catEl ? catEl.value : 'general',
+                           due_date: dueEl ? dueEl.value : ''})
+    }).then(function(){
+      if (titleEl) titleEl.value = '';
+      if (dueEl) dueEl.value = '';
+      var el = document.getElementById('proj-detail-overlay');
+      if (el) el.remove();
+      openProjectDetail(pid);
+    });
+  };
+  window.pdRestoreTask = function(taskId, pid) {
+    fetch('/api/task/'+taskId+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'open'})}).then(function(){
+      var el = document.getElementById('proj-detail-overlay'); if (el) el.remove(); openProjectDetail(pid);
+    });
+  };
+  window.pdToggleDoneArchive = function(pid) {
+    var el  = document.getElementById('pd-done-archive-' + pid);
+    var chv = document.getElementById('pd-done-chevron-' + pid);
+    if (!el) return;
+    var open = el.style.display !== 'none';
+    el.style.display = open ? 'none' : '';
+    if (chv) chv.innerHTML = open ? '&#9656;' : '&#9662;';
+  };
+
+  (function initTaskDrag(){
+    var list = document.getElementById('pd-task-list-' + _pid);
+    if (!list) return;
+    var dragging = null;
+    list.addEventListener('dragstart', function(e){
+      dragging = e.target.closest('.pd-task-row');
+      if (dragging) { dragging.style.opacity='0.4'; e.dataTransfer.effectAllowed='move'; }
+    });
+    list.addEventListener('dragend', function(){
+      if (dragging) dragging.style.opacity='';
+      dragging = null;
+      var order = Array.from(list.querySelectorAll('.pd-task-row')).map(function(r){return r.dataset.taskId;});
+      fetch('/api/project/'+_pid+'/tasks/reorder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:order})});
+    });
+    list.addEventListener('dragover', function(e){
+      e.preventDefault();
+      if (!dragging) return;
+      var target = e.target.closest('.pd-task-row');
+      if (target && target !== dragging) {
+        var rect = target.getBoundingClientRect();
+        list.insertBefore(dragging, e.clientY < rect.top + rect.height/2 ? target : target.nextSibling);
+      }
+    });
+  })();
+
+  window.pdSaveNote = function(pid) {
+    var el = document.getElementById('pd-note-input-' + pid);
+    var content = el ? el.value.trim() : '';
+    if (!content) { if (el) el.focus(); return; }
+    fetch('/api/project/'+pid+'/linked-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})}).then(function(){
+      if (el) el.value = '';
+      var ov = document.getElementById('proj-detail-overlay'); if (ov) ov.remove();
+      openProjectDetail(pid);
+      setTimeout(function(){ pdSwitchTab(pid,'notes'); }, 250);
+    });
+  };
+  window.pdDeleteNote = function(noteId, pid) {
+    if (!confirm('Delete this note?')) return;
+    fetch('/api/note/'+noteId,{method:'DELETE'}).then(function(){
+      var card = document.querySelector('[data-note-id="' + noteId + '"]');
+      if (card) { card.style.opacity='0'; setTimeout(function(){card.remove();},300); }
+    });
+  };
+
+  window.pdSaveAbout = function(pid) {
+    var payload = {
+      description:  (document.getElementById('pd-desc-'+pid)||{}).value||'',
+      started_at:   (document.getElementById('pd-started-'+pid)||{}).value||'',
+      completed_at: (document.getElementById('pd-completed-'+pid)||{}).value||'',
+      image_url:    (document.getElementById('pd-image-'+pid)||{}).value||'',
+    };
+    var statusEl = document.getElementById('pd-status-' + pid);
+    if (statusEl) payload.status = statusEl.value;
+    var ctx = (document.getElementById('ctx-textarea-'+pid)||{}).value||'';
+    Promise.all([
+      fetch('/api/project/'+pid+'/meta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+      fetch('/api/project/'+pid+'/context',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({context_doc:ctx})}),
+    ]).then(function(){ showToast('Project saved'); });
+  };
+
+  window.pdLogHistory = function(pid) {
+    var el = document.getElementById('pd-history-input-' + pid);
+    var summary = el ? el.value.trim() : '';
+    if (!summary) return;
+    fetch('/api/project/'+pid+'/history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({summary:summary})}).then(function(){
+      if (el) el.value = '';
+      var ov = document.getElementById('proj-detail-overlay'); if (ov) ov.remove();
+      openProjectDetail(pid);
+      setTimeout(function(){ pdSwitchTab(pid,'history'); }, 250);
+    });
+  };
+
+  window.copyProjectContext = function(pid) {
+    fetch('/api/project/'+pid+'/context').then(function(r){return r.json();}).then(function(d){
+      var lines = ['PROJECT: '+d.title];
+      if (d.domain) lines.push('Domain: '+d.domain);
+      lines.push('---');
+      if (d.context_doc) lines.push(d.context_doc);
+      if (d.prompt_memory) { lines.push('---'); lines.push(d.prompt_memory); }
+      if (d.next_step) { lines.push('---'); lines.push('NEXT STEP: '+d.next_step); }
+      navigator.clipboard.writeText(lines.join('\n')).then(function(){
+        var btn = document.getElementById('ctx-copy-btn-'+pid);
+        if (btn) { btn.textContent='COPIED!'; setTimeout(function(){btn.textContent='COPY';},2000); }
+      });
+    });
+  };
+})();
+</script>

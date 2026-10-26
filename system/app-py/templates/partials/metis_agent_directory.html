@@ -1,0 +1,70 @@
+{# Agent directory — full cards with description, when-to-use, how to name it, run history.
+   Inputs: agents[] from agent-registry.json (enriched with run_count, last_run), agent_count #}
+<div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5);">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;">
+    <div>
+      <div class="u-title u-title--lg">Agent registry</div>
+      <div style="font-size:var(--t-meta);color:var(--m-muted);margin-top:var(--m-space-1);">
+        {{ agent_count }} specialist{{ '' if agent_count == 1 else 's' }} available · each one picks up the work it fits, or name it directly as shown · run count shows how often each has been used.
+      </div>
+    </div>
+    <span class="u-label">AGENT-REGISTRY.JSON</span>
+  </div>
+</div>
+
+<div style="padding:var(--m-space-4) var(--m-space-5);">
+  {% if not agents %}
+    <div class="u-ed" style="font-size:var(--t-body);">No agent registry found at <code class="u-mono">system/config/agent-registry.json</code>.</div>
+  {% else %}
+  <div class="agent-card-grid">
+    {% for a in agents %}
+    {% set initial = (a.name or a.slug or '?')[0] | upper %}
+    {% set is_warm = a.run_count > 0 %}
+    {# A retired agent is still listed, because it is still there and still callable
+       by name — but the card must not imply a request will ever reach it on its own.
+       Before this, the directory showed every agent as if routing could pick it,
+       including two that the Agent tool could not dispatch at all. #}
+    {% set is_retired = a.routing == 'retired' %}
+    <div class="agent-card"{% if is_retired %} style="opacity:0.72;"{% endif %}>
+      <div class="agent-card-head">
+        <div class="agent-card-avatar" style="{% if is_warm and not is_retired %}border:2px solid var(--m-accent);{% endif %}">{{ initial }}</div>
+        <div class="u-grow">
+          <div class="agent-card-name">{{ a.name or a.slug }}</div>
+          <div class="agent-card-cmd">{{ a.invocation or ('/' ~ (a.slug or '')) }}{% if a.trust_tier %} · {{ a.trust_tier }}{% endif %}</div>
+          {% if is_retired %}
+          <div class="u-label" style="margin-top:var(--m-space-1);letter-spacing:0.06em;opacity:0.85;">
+            NOT AUTO-ROUTED{% if a.retired_to %} · WORK GOES TO {{ a.retired_to | upper }}{% endif %}
+          </div>
+          {% if a.retired_reason %}
+          <div class="u-label" style="margin-top:var(--m-space-1);opacity:0.6;text-transform:none;letter-spacing:0;">{{ a.retired_reason }}</div>
+          {% endif %}
+          {% endif %}
+        </div>
+        <div class="u-fixed" style="text-align:right;margin-left:8px;">
+          {% if is_warm %}
+            <div class="u-label u-label--accent" style="font-weight:600;">{{ a.run_count }} run{{ '' if a.run_count == 1 else 's' }}</div>
+            {% if a.last_run %}
+            <div class="u-label" style="letter-spacing:0.08em;">{{ a.last_run }}</div>
+            {% endif %}
+          {% else %}
+            <div class="u-label" style="opacity:0.6;">NEVER USED</div>
+          {% endif %}
+        </div>
+      </div>
+      {% if a.description %}
+      <div class="agent-card-desc">{{ a.description }}</div>
+      {% endif %}
+      {% if a.note %}
+      <div class="agent-card-when">When to use: {{ a.note }}</div>
+      {% endif %}
+      {% if a.chains_with %}
+      <div style="display:flex;flex-wrap:wrap;gap:var(--m-space-1);margin-top:var(--m-space-1);">
+        <span class="u-label" style="align-self:center;">CHAINS WITH</span>
+        {% for c in a.chains_with[:6] %}<span class="chip chip--mute" style="font-size:var(--t-micro);">{{ c }}</span>{% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

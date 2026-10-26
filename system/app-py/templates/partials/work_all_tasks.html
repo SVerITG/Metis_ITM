@@ -1,0 +1,50 @@
+{% from "partials/_duedate.html" import due_control %}
+{% from "partials/_empty.html" import panel as empty_panel %}
+<!-- work_all_tasks.html — All open tasks across every project, sorted by priority -->
+{% if not tasks %}
+{{ empty_panel("No open tasks across any project") }}
+{% else %}
+<div class="panel">
+  {% for t in tasks %}
+  <div class="todo-row{% if t.status == 'in_progress' %} todo-row--active{% endif %}"
+       data-task-id="{{ t.id }}"
+       style="grid-template-columns:28px 1fr auto auto;column-gap:14px;">
+    <span class="todo-check" onclick='markTaskDone({{ t.id | tojson }}, this)' title="Mark done" role="button" tabindex="0"></span>
+    <div style="min-width:0;">
+      <div class="todo-title u-truncate">{{ t.title }}</div>
+      <div class="todo-meta" style="margin-top:var(--m-space-1);display:flex;gap:var(--m-space-2);flex-wrap:wrap;">
+        {% if t.project %}
+        <span style="color:var(--m-muted);">{{ t.project }}</span>
+        {% endif %}
+        {#- The date is a CONTROL, not a label. It was rendered as text, so the
+            only way to set one was the project-detail form — which is why 70 of
+            71 open tasks had none. An undated task shows nothing here until you
+            hover; not knowing when you will get to something is normal, and a
+            column of empty prompts is how a field ends up ignored. -#}
+        {{ due_control(t.id, t.due_date[:10] if t.due_date else '', compact=true) }}
+        {% if t.priority == 'high' %}
+        <span class="u-mono" style="color:var(--m-alert);letter-spacing:0.1em;">HIGH</span>
+        {% endif %}
+        {% if t.category %}
+        <span class="u-mono" style="color:var(--m-muted);letter-spacing:0.08em;">{{ t.category | upper }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <span class="todo-meta">
+      {% if t.status == 'in_progress' %}<span style="color:var(--m-info);">IN PROGRESS</span>{% endif %}
+    </span>
+    <span class="todo-actions" style="display:flex;gap:var(--m-space-1);">
+      <button class="feed-act" title="Mark done" onclick='markTaskDone({{ t.id | tojson }}, this)'>
+        <svg viewBox="0 0 16 16"><polyline points="4 8 7 11 12 5"/></svg>
+      </button>
+      <button class="feed-act feed-act-dismiss" title="Delete" onclick='deleteTask({{ t.id | tojson }}, this)'>
+        <svg viewBox="0 0 16 16"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg>
+      </button>
+    </span>
+  </div>
+  {% endfor %}
+</div>
+<div class="tnum u-label" style="margin-top:var(--m-space-3);">
+  {{ tasks | length }} OPEN TASKS ACROSS ALL PROJECTS
+</div>
+{% endif %}

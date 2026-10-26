@@ -1,0 +1,29 @@
+{% from "partials/_empty.html" import panel as empty_panel %}
+{% from "partials/_section.html" import sec_label %}
+{# today_focus.html — Merged dismissable focus cards (up to 6 items).
+   Context: items (list of dicts with item_type, item_id, title, subtitle, badge, badge_class). #}
+<div id="today-focus">
+{% if items %}
+  {{ sec_label("Today's focus", tail="STAR A TASK TO PIN IT HERE") }}
+  <div class="grid grid-3 u-mb-6">
+    {% for item in items %}
+    <div class="panel panel--md" style="position:relative;">
+      {# Dismiss button #}
+      <button class="btn btn--ghost hov-dim" type="button" hx-post="/api/today/focus/dismiss" hx-vals='{"item_type": "{{ item.item_type }}", "item_id": "{{ item.item_id }}"}' hx-target="#today-focus" hx-swap="outerHTML" hx-headers='{"Content-Type": "application/json"}' style="position:absolute;top:8px;right:10px;font-size:var(--t-body);color:var(--m-muted);line-height:1;padding:var(--m-space-1) var(--m-space-1);opacity:0.5;" title="Dismiss for today">&times;</button>
+      {# Badge #}
+      <div class="u-row u-mb-2">
+        <span class="{{ item.badge_class or 'stat is-quiet' }}">{{ item.badge }}</span>
+        {% if item.subtitle %}
+        <span class="u-label" style="letter-spacing:0.08em;">{{ item.subtitle }}</span>
+        {% endif %}
+      </div>
+      {# Title #}
+      <div class="u-title" style="padding-right:16px;">{{ item.title }}</div>
+    </div>
+    {% endfor %}
+  </div>
+{% else %}
+  {{ sec_label("Today's focus", tail="ALL CLEAR") }}
+  {{ empty_panel("No open tasks or active ideas right now", "Star a task or capture an idea to fill this section.") }}
+{% endif %}
+</div>

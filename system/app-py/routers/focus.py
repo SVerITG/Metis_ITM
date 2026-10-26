@@ -1,0 +1,1301 @@
+"""focus.py — the dashboard surface for a focus area.
+
+ONE TEMPLATE, MANY SURFACES
+    Every other surface in Metis is a bespoke template: `today.html`,
+    `knowledge.html`, `work.html`. A focus surface cannot work that way — the
+    whole point is that the researcher adds and removes them himself, and a surface that
+    needs a developer to exist is not a surface a user can add.
+
+    So there is exactly one template, driven by one row. `/focus/ai-in-health-
+    epidemiology` and `/focus/anything-else` render the same file against
+    different data. That is what makes "custom pages a user can add or remove"
+    a real feature rather than a promise.
+
+THE FIVE COMPONENTS
+    Taken from what the researcher asked for, and each one reads a table that already owns
+    its rows — the focus writes no copies:
+
+      pulse     what is new since the last visit, and how stale the feed is
+      overview  the standing narrative — the orientation that survives the feed
+      feed      news through the lens              (news_briefs)
+      reading   literature through the lens        (new_publications)
+      thinking  notes and ideas written here       (personal_notes, ideas)
+
+    `pulse` is first on purpose. Opening a focus you have not seen for a week,
+    the first question is "what happened", not "what is this".
+"""
+from __future__ import annotations
+
+import json
+import re
+
+import datetime
+import logging
+import uuid
+
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
+router = APIRouter()
+log = logging.getLogger("metis.focus")
+
+
+def _f():
+    """Import the shared focus logic lazily so a broken MCP tree cannot break boot."""
+    from metis_mcp.tools import focus as F
+    return F
+
+
+def _now() -> str:
+    return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+# ---------------------------------------------------------------------------
+# The page
+# ---------------------------------------------------------------------------
+# ── WHICH SECTIONS A FOCUS SHOWS ─────────────────────────────────────────────
+# Until 2026-09-03 every focus rendered the same nine sections, because the first
+# focus was about AI and the template grew around it. The researcher put it
+# plainly: "Every shelf is different. There is no safe, brief, what changed, your
+# thinking" — a reference focus wants its tools and what is new, not a place to
+# accumulate verdicts.
+#
+# So the shape is data now. `focus_areas.sections` is a JSON list of keys in the
+# order they should appear; EMPTY MEANS THE HISTORICAL DEFAULT, so a focus that
+# predates this change renders exactly as it did.
+DEFAULT_SECTIONS = ["pulse", "overview", "safe", "brief", "thinking", "feed", "reading"]
+
+# Every key the template knows how to render. A key here that the template has no
+# branch for renders nothing, silently — so the test asserts the two agree.
+KNOWN_SECTIONS = ["pulse", "overview", "tools", "whatsnew", "briefings", "safe",
+                  "brief", "thinking", "feed", "reading"]
+
+
+# ── THE BRIEFING EDITIONS, READ IN PLACE ─────────────────────────────────────
+# Asked for 2026-09-04: "Add the Nature Briefings from the News surface to the
+# third focus on our shelf. Thumbnails, same styling as Nature, full articles
+# readable."
+#
+# Three of those four are here. THUMBNAILS ARE NOT, and the reason is data, not
+# effort: `briefing_item` carries headline, blurb, url and source and no image
+# column, and the 88 briefing rows in `news_briefs` are the only ones of 4,170
+# with no image_url. Getting a thumbnail means fetching each article page for
+# its og:image, which is general internet access and needs asking first.
+#
+# "Full articles readable" is served by the blurb, which is Nature's own
+# summary paragraph and is what the e-mail shows, plus the link out. The
+# briefing is a digest of other people's articles; the full text lives on the
+# publisher's page and is not ours to hold.
+def _briefing_editions(limit_kinds: int = 3, per_kind: int = 3) -> list:
+    """Editions with their items, newest first, for the briefings section."""
+    try:
+        import sys
+        from pathlib import Path as _P
+        root = _P(__file__).resolve().parents[3] / "mcp-server" / "src"
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from metis_mcp.tools import briefings as B
+    except Exception as exc:
+        log.warning("[focus] briefings unavailable: %s", exc)
+        return []
+    names = {slug: name for _needle, slug, name in B.KINDS}
+    out = []
+    for kind in list(B.SURFACED)[:limit_kinds]:
+        for ed in B.editions(kind, per_kind):
+            try:
+                items = B.items_of(ed["edition_id"])
+            except Exception:
+                items = []
+            # `items_of` predates the enrichment columns, so read them here
+            # rather than changing a shared MCP helper the News surface also
+            # uses. One query per edition, not per item.
+            try:
+                from db import db_query as _q
+                extra = {r["item_id"]: r for r in (_q(
+                    "SELECT item_id, COALESCE(image_url,'') AS image_url, "
+                    "       COALESCE(description,'') AS description, "
+                    "       COALESCE(enrich_note,'') AS enrich_note "
+                    "FROM briefing_item WHERE edition_id=?",
+                    (ed["edition_id"],), default=[]) or [])}
+                for it in items:
+                    e = extra.get(it.get("item_id")) or {}
+                    it["image_url"] = e.get("image_url", "")
+                    it["description"] = e.get("description", "")
+                    it["enrich_note"] = e.get("enrich_note", "")
+            except Exception as exc:
+                log.warning("[focus] briefing enrichment unreadable: %s", exc)
+            out.append({**ed, "kind_name": names.get(kind, kind), "items": items})
+    out.sort(key=lambda e: str(e.get("published_at") or ""), reverse=True)
+    return out
+
+
+def _sections_for(area: dict) -> list:
+    """The section keys this focus shows, in order."""
+    raw = (area or {}).get("sections") or ""
+    if not str(raw).strip():
+        return list(DEFAULT_SECTIONS)
+    try:
+        want = json.loads(raw)
+        keys = [k for k in want if k in KNOWN_SECTIONS]
+        # An unrecognised list is a configuration mistake, and a focus with no
+        # sections is a blank page. Fall back rather than render nothing.
+        return keys or list(DEFAULT_SECTIONS)
+    except Exception:
+        return list(DEFAULT_SECTIONS)
+
+
+def _links_for(area: dict) -> list:
+    """Focus-specific tools: [{title, href, note, kind}]. Never fails the page."""
+    raw = (area or {}).get("links") or ""
+    if not str(raw).strip():
+        return []
+    try:
+        out = json.loads(raw)
+        return [l for l in out if isinstance(l, dict) and l.get("title") and l.get("href")]
+    except Exception:
+        return []
+
+
+@router.get("/focus/{slug}", response_class=HTMLResponse)
+async def focus_page(request: Request, slug: str):
+    """One template, rendered against one focus row."""
+    from main import templates
+    F = _f()
+    area = F.get_focus(slug)
+    if not area:
+        return RedirectResponse(url="/", status_code=302)
+
+    # Read the pulse BEFORE stamping the visit, or "new since last visit" is
+    # always zero — the surface would mark everything read by being opened.
+    pulse = F.focus_pulse(slug)
+
+    # The items behind the pulse's counts, captured with the PREVIOUS visit
+    # timestamp — after `touch_visit` runs, "since your last visit" is "since a
+    # moment ago" and would always be empty. The counts had this right already;
+    # the items are new here because "What's new" shows them rather than
+    # counting them.
+    _prev = (area.get("last_visited_at") or "")
+    _new_news = F.focus_news(slug, limit=40, since=_prev[:10]) if _prev else []
+    _new_reading = F.focus_reading(slug, limit=40, since=_prev) if _prev else []
+
+    F.touch_visit(slug)
+
+    # Keep the navbar marker honest: it reads a stored column (a live lens query
+    # costs ~20 ms per focus, and the navbar renders on EVERY page — measured
+    # 2026-09-03), so opening the focus is what clears it.
+    try:
+        from db import db_execute
+        db_execute("UPDATE focus_areas SET n_new=?, n_new_at=? WHERE slug=?",
+                   (0, datetime.datetime.now().isoformat(), slug))
+    except Exception:
+        pass
+
+    # A wider window than the 14 the surface shows: the sift needs the whole
+    # catch to report honest counts, and "38 unjudged" is only true if 38 were
+    # actually looked at. The template slices for display, not the query.
+    ctx = _ctx(request, slug)
+    ctx.update({
+        "active_tab": f"focus:{slug}",
+        "pulse": pulse,
+        "brief": F.latest_brief(slug),
+        "deeplink": "",
+        "shelf": F.list_focus("active"),
+        "all_areas": F.list_focus(),
+        "max_shelf": F.MAX_SHELF,
+        "sections": _sections_for(area),
+        "links": _links_for(area),
+        "new_news": _new_news,
+        "new_reading": _new_reading,
+        "changed": _facet_breakdown(_new_news, _new_reading),
+    })
+    return templates.TemplateResponse(request, "focus.html", ctx)
+
+
+# ---------------------------------------------------------------------------
+# What changed, broken down
+# ---------------------------------------------------------------------------
+# "make it more detailled so i know exactly how many articles, new methodologies,
+# novel applications, most cited ... and the rest" (2026-09-13).
+#
+# Four of those five are answerable from text the surface already holds. The
+# fifth is NOT: nothing in this database stores a citation count, for news or for
+# papers, so "most cited" would have to be invented. It is named in the panel as
+# the thing that is missing rather than filled with a plausible-looking number —
+# a fabricated count is worse than an absent one, because it gets quoted.
+#
+# The four that ARE answerable are decided by vocabulary, and the panel says so.
+# This is a reading aid, not a taxonomy: an item lands in the family whose words
+# it uses most, ties going to the earlier family. A one-word difference can move
+# an item, which is exactly why the rule is stated on screen instead of being
+# presented as a classification.
+FACETS = [
+    ("method", "New methods", (
+        "we propose", "we introduce", "we present", "novel architecture",
+        "new model", "algorithm", "transformer", "fine-tun", "pre-train",
+        "pretrain", "neural network", "deep learning", "foundation model",
+        "large language model", "autoencoder", "attention", "embedding",
+        "classifier", "prediction model", "predictive model", "training data",
+        "self-supervised", "methodology", "framework for", "an approach to",
+        "solver", "architecture", "model to predict", "machine learning model")),
+    ("application", "Novel applications", (
+        "diagnos", "screening", "triage", "surveillance", "in the clinic",
+        "clinical use", "clinical usability", "hospital", "primary care",
+        "emergency", "icu", "intensive care", "field test", "deployed",
+        "deployment", "pilot", "implementation", "outbreak", "case finding",
+        "point of care", "point-of-care", "low-resource", "real-world",
+        "detect", "monitoring", "in patients", "patients with", "prescrib",
+        "treatment", "rural", "risk communication", "decision support",
+        "helping doctors", "workflow")),
+    ("evidence", "Evaluation & evidence", (
+        "external validation", "validation", "we evaluate", "evaluating",
+        "evaluation of", "accuracy", "sensitivity and specificity",
+        "performance of", "outperform", "calibration", "reproducib",
+        "generalis", "generaliz", "bias", "fairness", "error rate",
+        "failure mode", "systematic review", "meta-analysis", "randomis",
+        "randomiz", "benchmark", "compared with", "compared to",
+        "head-to-head", "matching manual", "insufficient")),
+    ("policy", "Policy & governance", (
+        "regulat", "guideline", "policy", "governance", "ethic",
+        "legislation", "new laws", "law", "watchdog", "oversight",
+        "approval", "authorised", "authorized", "fda", "ema ",
+        "world health organization", "data protection", "consent",
+        "liability", "accountab", "standards for", "recommendations for",
+        "act ", "reimbursement", "procurement")),
+]
+
+
+def _facet_of(text: str) -> str:
+    """Which family's vocabulary does this item use most? '' when none."""
+    t = (text or "").lower()
+    best, best_n = "", 0
+    for key, _label, words in FACETS:
+        n = sum(1 for w in words if w in t)
+        if n > best_n:          # STRICTLY greater — a tie keeps the earlier family
+            best, best_n = key, n
+    return best
+
+
+def _facet_breakdown(news: list, reading: list) -> dict:
+    """Group what arrived into named families, each with its items and its count.
+
+    Returns a dict shaped for the template: `order` (the families that have
+    anything, in fixed order, "rest" last), `groups` (key -> {label, items}),
+    and the two stream totals so the panel can print the denominator.
+    """
+    buckets: dict[str, list] = {k: [] for k, _l, _w in FACETS}
+    buckets["rest"] = []
+    labels = {k: l for k, l, _w in FACETS}
+    labels["rest"] = "Everything else"
+
+    def place(it, kind, text):
+        buckets[_facet_of(text) or "rest"].append({**it, "_kind": kind})
+
+    # `focus_reading` does not select `abstract` — reading it off those rows
+    # silently classified every paper on its TITLE alone, which put two thirds of
+    # them in the remainder. One extra query for the ids already on screen; the
+    # alternative is a breakdown that is mostly "everything else".
+    abstracts: dict[str, str] = {}
+    ids = [str(it.get("id")) for it in reading if it.get("id")]
+    if ids:
+        try:
+            from db import db_query
+            marks = ",".join("?" * len(ids))
+            for r in db_query(
+                    f"SELECT id, COALESCE(abstract,'') AS abstract "
+                    f"FROM new_publications WHERE id IN ({marks})",
+                    tuple(ids), default=[]) or []:
+                abstracts[str(r["id"])] = r["abstract"]
+        except Exception:
+            pass
+
+    for it in news:
+        place(it, "news", f"{it.get('title','')} {it.get('summary','') or ''}")
+    for it in reading:
+        body = abstracts.get(str(it.get("id")), "") or (it.get("abstract") or "")
+        place(it, "paper", f"{it.get('title','')} {body}")
+
+    order = [k for k, _l, _w in FACETS if buckets[k]]
+    if buckets["rest"]:
+        order.append("rest")
+    return {
+        "order": order,
+        "groups": {k: {"label": labels[k], "items": buckets[k]} for k in order},
+        "n_news": len(news),
+        "n_papers": len(reading),
+        "n_total": len(news) + len(reading),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Shelf management
+# ---------------------------------------------------------------------------
+@router.post("/api/focus/{slug}/state")
+async def set_state(slug: str, state: str = Form(...)):
+    """Put a focus on the shelf, take it off, or archive it."""
+    F = _f()
+    import asyncio
+    res = await F.set_focus_state(slug, state)
+    return JSONResponse({"ok": True, "message": res[0].text})
+
+
+@router.get("/api/focus/shelf")
+async def shelf():
+    """The active shelf — what the navbar renders."""
+    F = _f()
+    return JSONResponse({
+        "ok": True,
+        "max": F.MAX_SHELF,
+        "active": [
+            {"slug": a["slug"], "title": a["title"], "slot": a["shelf_slot"]}
+            for a in F.list_focus("active")
+        ],
+    })
+
+
+# ---------------------------------------------------------------------------
+# Writing on a focus — the "brainstorm" half
+# ---------------------------------------------------------------------------
+# Notes and ideas are tagged `focus:<slug>` and written to the tables that own
+# them. That tag is the ONLY association, and it is why archiving a focus loses
+# nothing: the row stays in `personal_notes` / `ideas` with its tag intact,
+# findable by search whether or not the lens still exists.
+@router.post("/api/focus/{slug}/note", response_class=HTMLResponse)
+async def add_note(request: Request, slug: str, content: str = Form(...),
+                   title: str = Form("")):
+    """Record a note against this focus."""
+    from db import db_execute
+    from main import templates
+    F = _f()
+    if content.strip():
+        db_execute(
+            "INSERT INTO personal_notes (note_id, content, title, tags, created_at, "
+            "updated_at) VALUES (?,?,?,?,?,?)",
+            (str(uuid.uuid4())[:8], content.strip(), title.strip(),
+             f"focus:{slug}", _now(), _now()))
+    ctx = _ctx(request, slug)
+    body = templates.get_template("partials/focus_thinking.html").render(**ctx)
+    return HTMLResponse(body + _counts_oob(request, slug, ctx))
+
+
+@router.post("/api/focus/{slug}/idea", response_class=HTMLResponse)
+async def add_idea(request: Request, slug: str, text: str = Form(...)):
+    """Capture an idea against this focus."""
+    from db import db_execute
+    from main import templates
+    F = _f()
+    if text.strip():
+        db_execute(
+            "INSERT INTO ideas (idea_id, text, idea_type, tags, created_at, domain) "
+            "VALUES (?,?,?,?,?,?)",
+            (str(uuid.uuid4())[:8], text.strip(), "focus", f"focus:{slug}",
+             _now(), slug))
+    ctx = _ctx(request, slug)
+    body = templates.get_template("partials/focus_thinking.html").render(**ctx)
+    return HTMLResponse(body + _counts_oob(request, slug, ctx))
+
+
+# ---------------------------------------------------------------------------
+# Partials — so a refresh does not reload the page
+# ---------------------------------------------------------------------------
+# Both go through `_ctx`, the same builder the page and every verdict route use.
+# These used to hand-roll their own two-key context, and that is precisely how a
+# partial drifts out of step with the page it belongs to: the template gained
+# `counts` and the sift, and a hand-rolled dict would have rendered a blank
+# header on refresh while the full page looked fine.
+def _close_ctx(slug: str) -> dict | None:
+    """What in this focus is closest to what the reader actually works on.
+
+    "Close to my work" was asked for on 2026-09-13 and appeared in NO router and
+    NO template — it had to be built, not fixed.
+
+    The distinction it draws is the useful one. A focus lens is a keyword query:
+    it answers "is this about AI in health", which on a busy week is 150 items and
+    a blur. This asks a different question — "is this near MY projects, courses
+    and library" — and it already has an answer, because relevance.py scores every
+    item against a profile built from exactly those anchors, weighted by band
+    (project 1.00, course 1.00, field 0.95, stated topic 0.88).
+
+    So this is not a second keyword filter. It is the lens INTERSECTED with the
+    profile: items the focus caught, ranked by their distance from the reader's
+    own work, top N. No absolute cutoff — that is the mistake that emptied the
+    field-week panel three days after it fixed it, because a fixed threshold on a
+    score whose scale drifts will silently select nothing.
+    """
+    from db import db_query
+
+    F = _f()
+    area = F.get_focus(slug)
+    if not area:
+        return None
+
+    groups = F._groups(area)
+    if not groups:
+        return {"area": area, "items": [], "total": 0, "scored": 0}
+
+    # The lens is built by the focus module, not restated here. Two SQL
+    # fragments claiming to be the same lens is the "one author per count"
+    # failure in query form: they agree until one is edited.
+    news_where, news_params = F.lens_sql(groups, 'title || " " || COALESCE(summary,"")')
+    pub_where, pub_params = F.lens_sql(groups, 'title || " " || COALESCE(abstract,"")')
+
+    # Over-fetch, then word-boundary confirm, THEN rank — `confirm` can only
+    # remove rows, so a LIMIT applied before it returns short.
+    news = db_query(
+        "SELECT brief_id AS item_id, title, summary AS blurb, source_url, "
+        "       COALESCE(brief_date,'') AS dated, COALESCE(relevance,0) AS rel, "
+        "       'news' AS kind "
+        "FROM news_briefs WHERE " + news_where +
+        " AND COALESCE(brief_date,'') >= date('now','-45 day') "
+        "ORDER BY relevance DESC, brief_date DESC LIMIT 220",
+        tuple(news_params), default=[]) or []
+    pubs = db_query(
+        "SELECT CAST(id AS TEXT) AS item_id, title, abstract AS blurb, source_url, "
+        "       COALESCE(NULLIF(pub_iso,''), NULLIF(pub_date,''), discovered_at) AS dated, "
+        "       COALESCE(relevance,0) AS rel, 'paper' AS kind "
+        "FROM new_publications WHERE " + pub_where +
+        " AND COALESCE(dismissed_at,'') = '' "
+        "ORDER BY relevance DESC, discovered_at DESC LIMIT 220",
+        tuple(pub_params), default=[]) or []
+
+    items = (F.confirm(groups, news, ["title", "blurb"])
+             + F.confirm(groups, pubs, ["title", "blurb"]))
+
+    # Already decided here? Then it is not news to him. A verdict is per-focus,
+    # so an item dismissed on another shelf still shows up on this one.
+    judged = {(v["kind"], str(v["item_id"])) for v in F.focus_verdicts(slug)}
+    items = [i for i in items if (i["kind"], str(i["item_id"])) not in judged]
+
+    scored = len(items)
+    # TOP-N, never a floor. A fixed cutoff on a score whose scale drifts selects
+    # nothing by luck — that is exactly what emptied the field-week panel.
+    items.sort(key=lambda i: (-float(i.get("rel") or 0), i.get("dated") or ""))
+    top = items[:14]
+    for i in top:
+        b = (i.get("blurb") or "").strip().replace("\n", " ")
+        i["blurb"] = (b[:190] + "\u2026") if len(b) > 190 else b
+        # `_id` is what the shared verdict macro reads. Set here rather than
+        # writing a second pair of Keep/Not-for-me buttons for this panel — two
+        # implementations of one judgement is how they come to disagree.
+        i["_id"] = str(i["item_id"])
+
+    return {"area": area, "items": top, "total": len(top), "scored": scored}
+
+
+@router.get("/api/partial/focus/{slug}/close-to-work", response_class=HTMLResponse)
+async def focus_close_to_work(request: Request, slug: str):
+    from main import templates
+    ctx = _close_ctx(slug)
+    if ctx is None:
+        return HTMLResponse("")
+    return templates.TemplateResponse(
+        request, "partials/focus_close_to_work.html", ctx)
+
+
+@router.get("/api/partial/focus/{slug}/feed", response_class=HTMLResponse)
+async def feed_partial(request: Request, slug: str):
+    from main import templates
+    return templates.TemplateResponse(request, "partials/focus_feed.html",
+                                      _ctx(request, slug))
+
+
+@router.get("/api/partial/focus/{slug}/reading", response_class=HTMLResponse)
+async def reading_partial(request: Request, slug: str):
+    from main import templates
+    return templates.TemplateResponse(request, "partials/focus_reading.html",
+                                      _ctx(request, slug))
+
+
+def _recount_new(slug: str) -> int:
+    """Store how many items are new since the last visit, for the navbar marker.
+
+    STORED, NOT COMPUTED ON DEMAND. The navbar renders on every page in the app,
+    and this lens is `LIKE %term%` across a dozen terms over ~4,000 briefs —
+    measured at 19–29 ms per focus on 2026-09-03. Two focuses would have added
+    ~48 ms to every page in the dashboard. So the count is written when the lens
+    is scanned and cleared when the focus is opened, and the navbar reads a
+    plain integer column for free.
+
+    That makes the marker mean "new since the last scan", which is the honest
+    claim — not "new right now", which nothing could know without paying for it.
+    """
+    F = _f()
+    area = F.get_focus(slug)
+    if not area:
+        return 0
+    prev = (area.get("last_visited_at") or "")
+    if not prev:
+        return 0
+    try:
+        n = len(F.focus_news(slug, limit=200, since=prev[:10])) \
+            + len(F.focus_reading(slug, limit=200, since=prev))
+    except Exception:
+        return 0
+    try:
+        from db import db_execute
+        db_execute("UPDATE focus_areas SET n_new=?, n_new_at=? WHERE slug=?",
+                   (n, _now(), slug))
+    except Exception:
+        pass
+    return n
+
+
+@router.post("/api/focus/{slug}/scan", response_class=HTMLResponse)
+async def scan_whatsnew(request: Request, slug: str):
+    """Scan the shared sources, then re-render THIS focus's "What's new".
+
+    Separate from `/refresh` because that one answers with the pulse partial;
+    pointing a "What's new" button at it swapped the wrong content in. Same scan
+    underneath — a focus is a lens over the shared collection, never its own
+    fetch path.
+    """
+    from main import templates
+    F = _f()
+    try:
+        from metis_mcp.tools.content_scan import scan_news_feeds
+        scan_news_feeds(max_per_feed=8)
+    except Exception as exc:
+        log.warning("[focus] scan %s: %s", slug, type(exc).__name__)
+    try:
+        from db import db_execute
+        db_execute("UPDATE focus_areas SET last_refreshed_at=? WHERE slug=?", (_now(), slug))
+    except Exception:
+        pass
+
+    area = F.get_focus(slug)
+    prev = (area.get("last_visited_at") or "") if area else ""
+    nn = F.focus_news(slug, limit=40, since=prev[:10]) if prev else []
+    nr = F.focus_reading(slug, limit=40, since=prev) if prev else []
+    # The breakdown is built HERE as well as on the page, and from the same
+    # helper. `focus_counts.html` was the lesson: a variable set at only one of a
+    # partial's two render sites does not fail loudly, it renders a quietly wrong
+    # panel after the first refresh.
+    return templates.TemplateResponse(request, "partials/focus_whatsnew.html", {
+        "area": area,
+        "new_news": nn,
+        "new_reading": nr,
+        "changed": _facet_breakdown(nn, nr),
+    })
+
+
+@router.post("/api/focus/{slug}/refresh", response_class=HTMLResponse)
+async def refresh(request: Request, slug: str):
+    """Re-scan the sources this focus reads, then re-render the pulse.
+
+    Deliberately reuses the SAME scan jobs the rest of Metis uses rather than
+    fetching on its own — a focus is a lens over the shared collection, so a
+    focus-specific fetch path would produce items only this surface could see.
+    """
+    from main import templates
+    F = _f()
+    errors = []
+    try:
+        from metis_mcp.tools.content_scan import scan_news_feeds
+        scan_news_feeds(max_per_feed=8)
+    except Exception as exc:
+        errors.append(f"news: {type(exc).__name__}")
+    try:
+        from db import db_execute
+        db_execute("UPDATE focus_areas SET last_refreshed_at=? WHERE slug=?",
+                   (_now(), slug))
+    except Exception as exc:
+        errors.append(f"stamp: {type(exc).__name__}")
+    if errors:
+        log.warning("[focus] refresh %s: %s", slug, "; ".join(errors))
+    return templates.TemplateResponse(request, "partials/focus_pulse.html", {
+        "area": F.get_focus(slug), "pulse": F.focus_pulse(slug),
+        "corpus": F.focus_corpus(slug),
+        "today": datetime.date.today().isoformat()})
+
+
+# ---------------------------------------------------------------------------
+# The index — where focus areas are created, and where the non-active ones live
+# ---------------------------------------------------------------------------
+# Two gaps this closes.
+#
+# 1. THERE WAS NO WAY TO CREATE A FOCUS FROM THE DASHBOARD. It took an MCP call,
+#    which quietly contradicts the whole premise: a surface is not one a user
+#    can add if adding one requires a tool call.
+#
+# 2. `following` AND `archived` AREAS WERE UNREACHABLE. Only active areas appear
+#    in the navbar, so anything taken off the shelf could be opened only by typing
+#    its URL. An interest you set aside is exactly the one you will not remember
+#    the slug for.
+#
+# The form asks for keyword GROUPS as separate fields — "must mention one of" AND
+# "and one of" — rather than asking for JSON. That teaches the conjunction by
+# construction, which matters because the conjunction is the one thing a user has
+# to understand for the lens to behave.
+def _suggest_link() -> str:
+    """A deeplink that asks Claude to propose a focus, seeded with real work.
+
+    Seeded, and that is the whole difference. "Suggest a research focus" produces
+    a plausible-sounding subject anybody could have named. Handed the projects
+    this researcher actually has open, the ideas he has captured and what he has
+    been reading, it proposes something he might not have thought to cross — which
+    is the only version of this feature worth the click.
+
+    Nothing is sent anywhere by building this string: it becomes an href, and the
+    researcher chooses whether to follow it.
+    """
+    import urllib.parse as _up
+
+    from db import db_query
+
+    def _rows(sql, n=6):
+        try:
+            return [dict(r) for r in (db_query(sql) or [])][:n]
+        except Exception:
+            return []
+
+    # `projects` has no `updated_at` — it has `last_session_at` and `created_at`.
+    # The first draft ordered by `updated_at`, and db_query swallowed the
+    # OperationalError and returned []: the deeplink silently shipped without any
+    # projects in it and looked perfectly fine. Caught 2026-08-26 only by reading
+    # the generated prompt.
+    projects = _rows("SELECT title, COALESCE(next_step,'') AS next_step FROM projects "
+                     "WHERE COALESCE(status,'') NOT IN ('archived','done','completed') "
+                     "ORDER BY COALESCE(last_session_at, created_at) DESC LIMIT 6")
+    ideas = _rows("SELECT text FROM ideas WHERE COALESCE(tags,'') NOT LIKE "
+                  "'%archived%' ORDER BY created_at DESC LIMIT 8")
+    papers = _rows("SELECT title FROM new_publications ORDER BY discovered_at "
+                   "DESC LIMIT 10")
+    existing = _rows("SELECT title, keyword_groups FROM focus_areas LIMIT 10", 10)
+
+    L = ["I want to set up a new focus area in Metis — a lens that keeps me current "
+         "on one subject.", "",
+         "A focus is TWO SUBJECTS CROSSED. It is defined by keyword groups: an item "
+         "must mention something from EVERY group. So group 1 might be "
+         "{artificial intelligence, machine learning} and group 2 {health, clinical, "
+         "epidemiology}.", "",
+         "Two things I have learned the hard way about these keywords:",
+         "- Keywords match as SUBSTRINGS, so anything shorter than four letters is "
+         "dangerous. 'ai' matches 'said' and 'maintain'; 'gis' matches "
+         "'radiologists'. Give me words of four letters or more.",
+         "- A deliberate stem is fine and useful: 'epidemi' catches both "
+         "'epidemiology' and 'epidemic'.", ""]
+
+    if existing:
+        L += ["Focus areas I already have (do not duplicate these):"]
+        L += [f"- {e['title']}" for e in existing] + [""]
+    if projects:
+        L += ["Projects I have open:"]
+        L += [f"- {p['title']}" + (f" — next: {p['next_step'][:90]}"
+                                   if p["next_step"] else "") for p in projects] + [""]
+    if ideas:
+        L += ["Ideas I have captured recently:"]
+        L += [f"- {i['text'][:160]}" for i in ideas] + [""]
+    if papers:
+        L += ["Papers that reached me lately:"]
+        L += [f"- {p['title'][:120]}" for p in papers] + [""]
+
+    L += ["Propose THREE focus areas I could set up, each as:",
+          "  Title · one line on what it is for · group 1 keywords · group 2 keywords",
+          "",
+          "Pick crossings that my own work suggests and that I have not already "
+          "covered. Then say which one you would start with, and why. Keep it short "
+          "— I am going to paste the keywords straight into a form."]
+
+    return "claude://claude.ai/new?q=" + _up.quote("\n".join(L)[:7000], safe="")
+
+
+@router.get("/focus", response_class=HTMLResponse)
+async def focus_index(request: Request):
+    from main import templates
+    F = _f()
+    areas = F.list_focus()
+    enriched = []
+    for a in areas:
+        t = F.focus_thinking(a["slug"])
+        enriched.append({**a,
+                         "n_news": len(F.focus_news(a["slug"], limit=500)),
+                         "n_reading": len(F.focus_reading(a["slug"], limit=500)),
+                         "n_thinking": len(t["notes"]) + len(t["ideas"])})
+    return templates.TemplateResponse(request, "focus_index.html", {
+        "active_tab": "focus-index",
+        "areas": enriched,
+        "n_active": sum(1 for a in areas if a["state"] == "active"),
+        "max_shelf": F.MAX_SHELF,
+        "layers": _layer_slugs(),
+        "suggest_link": _suggest_link(),
+    })
+
+
+def _layer_slugs() -> list[dict]:
+    try:
+        from db import db_query
+        return [dict(r) for r in (db_query(
+            "SELECT k.slug, k.name, COUNT(DISTINCT p.source_file) AS docs "
+            "FROM knowledge_databases k "
+            "LEFT JOIN pdf_chunks p ON p.db_id = k.id "
+            "GROUP BY k.slug ORDER BY 3 DESC") or [])]
+    except Exception:
+        return []
+
+
+def _parse_group(raw: str) -> list[str]:
+    """A comma-separated field becomes one keyword group."""
+    return [w.strip().lower() for w in (raw or "").split(",") if w.strip()]
+
+
+@router.post("/api/focus/preview", response_class=HTMLResponse)
+async def preview(request: Request, group1: str = Form(""), group2: str = Form(""),
+                  group3: str = Form("")):
+    """Live preview of a candidate lens — the answer to blind lens tuning.
+
+    Fires as the form is typed. Before this, the only way to learn a lens caught
+    nothing was to create the focus, open the surface and find it empty.
+    """
+    from main import templates
+    F = _f()
+    groups = [g for g in (_parse_group(group1), _parse_group(group2),
+                          _parse_group(group3)) if g]
+    return templates.TemplateResponse(request, "partials/focus_preview.html",
+                                      {"p": F.preview_lens(groups) if groups else None})
+
+
+@router.post("/api/focus/create")
+async def create(request: Request, title: str = Form(...), subtitle: str = Form(""),
+                 group1: str = Form(""), group2: str = Form(""),
+                 group3: str = Form(""), layers: str = Form(""),
+                 activate: str = Form("")):
+    """Create a focus from the form, then open it."""
+    import json as _json
+    F = _f()
+    groups = [g for g in (_parse_group(group1), _parse_group(group2),
+                          _parse_group(group3)) if g]
+    if not title.strip() or not groups:
+        return RedirectResponse(url="/focus", status_code=302)
+    res = await F.create_focus_area(
+        title=title.strip(), keyword_groups=_json.dumps(groups),
+        subtitle=subtitle.strip(), layers=layers.strip(),
+        activate=bool(activate))
+    slug = F.slugify(title)
+    if F.get_focus(slug):
+        return RedirectResponse(url=f"/focus/{slug}", status_code=302)
+    log.warning("[focus] create failed: %s", res[0].text[:160])
+    return RedirectResponse(url="/focus", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# The safe — keep, decline, undo
+# ---------------------------------------------------------------------------
+# Every one of these re-renders the SECTION the click came from, not the page.
+# The counts strip is swapped out-of-band alongside it, because a "keep" that
+# leaves the header saying 3 while the safe shows 4 teaches the researcher not to
+# trust the header.
+
+def _ctx(request, slug):
+    """Everything a focus partial can need, built once."""
+    F = _f()
+    area = F.get_focus(slug)
+    news = F.sift(slug, F.focus_news(slug, 120), "news", "title", "brief_id")
+    reading = F.sift(slug, F.focus_reading(slug, 120), "reading", "title", "id")
+    return {
+        "area": area,
+        # Set HERE, not only in the page route: `focus_counts.html` is also
+        # rendered out-of-band after a verdict, and a partial that reads a
+        # variable one of its two render sites does not pass silently falls back
+        # to showing everything — which would put the safe and thinking counts
+        # back on a focus that has neither.
+        "sections": _sections_for(area),
+        "links": _links_for(area),
+        # Only paid for when the focus asks for it — the briefing fetch walks
+        # editions and their items, and no other focus needs it.
+        "briefings": (_briefing_editions()
+                      if "briefings" in _sections_for(area) else []),
+        "news": news,
+        "reading": reading,
+        "counts": F.focus_counts(slug),
+        "kept": F.focus_verdicts(slug, "kept"),
+        "taste": F.focus_taste(slug),
+        "mute_at": F.MUTE_AT,
+        "questions": F.focus_questions(slug),
+        "thinking": F.focus_thinking(slug),
+        "noise": _lens_noise(slug),
+        # `corpus` belongs here, not only on the page: the counts strip renders it
+        # and the strip is swapped out-of-band on every verdict. Left in the page
+        # handler alone, the unknown-layer warning would appear on load and then
+        # silently vanish the first time you pressed Keep.
+        "corpus": F.focus_corpus(slug),
+        "today": datetime.date.today().isoformat(),
+    }
+
+
+def _counts_oob(request, slug, ctx=None):
+    """The counts strip, marked for an out-of-band swap."""
+    from main import templates
+    ctx = ctx or _ctx(request, slug)
+    html = templates.get_template("partials/focus_counts.html").render(**ctx)
+    return f'<div id="focus-counts" hx-swap-oob="innerHTML">{html}</div>'
+
+
+@router.post("/api/focus/{slug}/judge", response_class=HTMLResponse)
+async def judge_item(request: Request, slug: str, kind: str = Form(...),
+                     item_id: str = Form(...), verdict: str = Form(...),
+                     title: str = Form(""), url: str = Form("")):
+    """Keep an item in the safe, or say it is not for you."""
+    from main import templates
+    F = _f()
+    try:
+        F.judge(slug, kind, item_id, verdict, title, url)
+    except ValueError:
+        pass
+    # WHICH list re-renders is decided by the element HTMX is about to swap, not
+    # by `kind`. Judging from the "close to my work" panel used to swap the FEED
+    # into it — the same class of defect as a `back=` value with no branch: it
+    # does not error, it silently replaces the panel with a different one.
+    ctx = _ctx(request, slug)
+    target = request.headers.get("HX-Target", "")
+    if target == "focus-close":
+        close = _close_ctx(slug)
+        if close is not None:
+            body = templates.get_template(
+                "partials/focus_close_to_work.html").render(**close)
+            return HTMLResponse(body + _counts_oob(request, slug, ctx))
+    tpl = "partials/focus_feed.html" if kind == "news" else "partials/focus_reading.html"
+    body = templates.get_template(tpl).render(**ctx)
+    return HTMLResponse(body + _counts_oob(request, slug, ctx))
+
+
+@router.post("/api/focus/{slug}/unjudge", response_class=HTMLResponse)
+async def unjudge_item(request: Request, slug: str, kind: str = Form(...),
+                       item_id: str = Form(...)):
+    """Undo a verdict — back to undecided.
+
+    Undo is reachable from two places: the "Judged" fold inside a list, and the
+    safe itself. HTMX names the element it is about to swap in the `HX-Target`
+    header, so the caller does not have to say which partial it wants — the
+    request already carries it, and one source of truth beats two.
+    """
+    from main import templates
+    F = _f()
+    F.unjudge(slug, kind, item_id)
+    ctx = _ctx(request, slug)
+    target = request.headers.get("HX-Target", "")
+    if target == "focus-close":
+        close = _close_ctx(slug)
+        if close is not None:
+            body = templates.get_template(
+                "partials/focus_close_to_work.html").render(**close)
+            return HTMLResponse(body + _counts_oob(request, slug, ctx))
+    tpl = ("partials/focus_safe.html" if target == "focus-safe"
+           else "partials/focus_feed.html" if kind == "news"
+           else "partials/focus_reading.html")
+    body = templates.get_template(tpl).render(**ctx)
+    return HTMLResponse(body + _counts_oob(request, slug, ctx))
+
+
+# ---------------------------------------------------------------------------
+# Questions and Explore
+# ---------------------------------------------------------------------------
+@router.post("/api/focus/{slug}/question", response_class=HTMLResponse)
+async def add_question(request: Request, slug: str, text: str = Form(...)):
+    """Record a question against this focus.
+
+    Stored as an idea with `idea_type='question'` — the same table, so a question
+    the researcher later answers stays findable by idea search whatever happens to
+    this surface.
+    """
+    from db import db_execute
+    from main import templates
+    if text.strip():
+        db_execute(
+            "INSERT INTO ideas (idea_id, text, idea_type, tags, created_at, domain) "
+            "VALUES (?,?,?,?,?,?)",
+            (str(uuid.uuid4())[:8], text.strip(), "question", f"focus:{slug}",
+             _now(), slug))
+    ctx = _ctx(request, slug)
+    body = templates.get_template("partials/focus_thinking.html").render(**ctx)
+    return HTMLResponse(body + _counts_oob(request, slug, ctx))
+
+
+@router.post("/api/focus/{slug}/forget", response_class=HTMLResponse)
+async def forget_entry(request: Request, slug: str, kind: str = Form(...),
+                       entry_id: str = Form(...)):
+    """Remove a note, idea or question written on this focus.
+
+    Added 2026-08-26 to close a gap this session opened: questions could be
+    asked and never removed. Shipping a control that creates rows without one
+    that removes them leaves the researcher stuck with his own typos.
+
+    Extended to notes and ideas for the same reason, and scoped so it cannot
+    reach further than this surface: the WHERE clause requires the row to carry
+    this focus's tag. A note written somewhere else that happens to share an id
+    is not this surface's to delete.
+    """
+    from db import db_execute
+    from main import templates
+    tag = f"%focus:{slug}%"
+    if kind == "note":
+        db_execute("DELETE FROM personal_notes WHERE note_id = ? "
+                   "AND COALESCE(tags,'') LIKE ?", (entry_id, tag))
+    else:
+        db_execute("DELETE FROM ideas WHERE idea_id = ? "
+                   "AND COALESCE(tags,'') LIKE ?", (entry_id, tag))
+    ctx = _ctx(request, slug)
+    body = templates.get_template("partials/focus_thinking.html").render(**ctx)
+    return HTMLResponse(body + _counts_oob(request, slug, ctx))
+
+
+def _ask_claude_link(title: str, body: str) -> str:
+    """A deeplink that carries the material, so nothing has to be retyped."""
+    import urllib.parse as _up
+    prompt = f"{title}\n\n{body}"[:6000]
+    return "claude://claude.ai/new?q=" + _up.quote(prompt, safe="")
+
+
+@router.post("/api/focus/{slug}/explore", response_class=HTMLResponse)
+async def explore_question(request: Request, slug: str, question: str = Form(...)):
+    """Answer a question from this focus's own corpus, literature and thinking.
+
+    Retrieval only. The dashboard composes nothing — see the docstring on
+    `focus.explore` for why that division is the honest one.
+    """
+    from main import templates
+    F = _f()
+    area = F.get_focus(slug)
+    result = F.explore(slug, question, limit=6)
+
+    lines = [f"Question on my focus area \"{area['title']}\": {question}", ""]
+    if result["passages"]:
+        lines += ["From my indexed corpus:"]
+        lines += [f"- {p['title'] or p['source_file']} (p.{p['page_start']}): "
+                  f"{(p['chunk_text'] or '')[:300]}" for p in result["passages"][:4]]
+    if result["papers"]:
+        lines += ["", "Papers in my library:"]
+        lines += [f"- {r['title']}" + (f" (doi:{r['doi']})" if r.get("doi") else "")
+                  for r in result["papers"][:5]]
+    if result["ideas"] or result["notes"]:
+        lines += ["", "What I already wrote:"]
+        lines += [f"- {i['text'][:200]}" for i in result["ideas"][:4]]
+        lines += [f"- {n['title'] or n['content'][:200]}" for n in result["notes"][:4]]
+    lines += ["", "Answer using this material. Say clearly which parts my own "
+              "sources support and which they do not."]
+
+    return templates.TemplateResponse(request, "partials/focus_explore.html", {
+        "area": area,
+        "result": result,
+        "deeplink": _ask_claude_link("", "\n".join(lines)),
+    })
+
+
+# ---------------------------------------------------------------------------
+# The brief
+# ---------------------------------------------------------------------------
+@router.post("/api/focus/{slug}/brief", response_class=HTMLResponse)
+async def generate_brief(request: Request, slug: str):
+    """Assemble a brief for this focus and keep it."""
+    from main import templates
+    F = _f()
+    area = F.get_focus(slug)
+    body = F.build_brief(slug)
+    p = F.focus_pulse(slug)
+    F.save_brief(slug, body, p.get("total_news", 0), p.get("total_reading", 0))
+    return templates.TemplateResponse(request, "partials/focus_brief.html", {
+        "area": area,
+        "brief": F.latest_brief(slug),
+        "deeplink": _ask_claude_link(
+            "", f"Here is today's brief on my focus area \"{area['title']}\". "
+                f"Write it up as a short narrative I can read in two minutes, and "
+                f"tell me what you think I should look at first.\n\n{body}"),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Lens diagnosis
+# ---------------------------------------------------------------------------
+# Why this lives here and not in the lens itself: changing how the lens MATCHES
+# would change what every existing focus contains, silently, without the
+# researcher asking for it. So the surface reports the problem with a number and
+# leaves the decision where it belongs. Measured 2026-08-26 on the AI-in-health
+# lens: 70 of 388 briefs (18%) matched only inside longer words — 'ai' in
+# "saison", 'gis' in "radiologists", 'gis' in "législateur".
+def _lens_noise(slug: str) -> dict:
+    """How much of this lens's catch is substring accident rather than subject."""
+    import re as _re
+    F = _f()
+    f = F.get_focus(slug)
+    if not f:
+        return {}
+    groups = F._groups(f)
+    if not groups:
+        return {}
+    items = F.focus_news(slug, 400)
+    if not items:
+        return {}
+
+    def _boundary(kw, text):
+        return _re.search(r"\b" + _re.escape(kw.lower()), text) is not None
+
+    bad, examples = 0, []
+    for it in items:
+        blob = f"{it['title']} {it.get('summary') or ''}".lower()
+        if all(any(_boundary(k, blob) for k in g) for g in groups):
+            continue
+        bad += 1
+        if len(examples) < 4:
+            for g in groups:
+                for k in g:
+                    k = k.lower()
+                    if k in blob and not _boundary(k, blob):
+                        m = _re.search(r"\w*" + _re.escape(k) + r"\w*", blob)
+                        if m and m.group(0) != k:
+                            examples.append({"kw": k, "word": m.group(0)})
+                            break
+                else:
+                    continue
+                break
+    seen, uniq = set(), []
+    for e in examples:
+        if e["kw"] not in seen:
+            seen.add(e["kw"])
+            uniq.append(e)
+    return {"total": len(items), "false_positives": bad,
+            "pct": round(100 * bad / len(items)), "examples": uniq}
+
+
+# ---------------------------------------------------------------------------
+# Seeding a focus from work you already have
+# ---------------------------------------------------------------------------
+# Asked for 2026-09-14: "add new focus like it is now and another possibility
+# add project or course ... I want to try to add one of the courses to my focus".
+#
+# IT SEEDS THE FORM, IT DOES NOT CREATE THE FOCUS. The same reasoning as the
+# "let Metis suggest one" link beside it: the form does two things nothing else
+# does — it previews the lens against the real corpus before you commit, and it
+# writes the structured keyword groups the shelf and the news filter consume. A
+# path that skipped it would produce focus areas nobody had ever seen the catch
+# for, and an empty shelf slot is worse than no shelf slot.
+#
+# THE TWO AXES COME FROM THE TITLE. A course or project named "X in Y" is already
+# a crossing — that is how people name work — so the connector is the split. When
+# a title has no connector there is one axis, which `lens_sql` handles fine; the
+# researcher can add the second by hand, having seen what one catches.
+
+_AXIS_SPLIT = re.compile(
+    r"\s+(?:in|for|of|on|and|with|to|from|across|&|-|–|—|:|\|)\s+", re.I)
+_SEED_STOP = {
+    "the", "a", "an", "and", "or", "for", "with", "from", "into", "about",
+    "course", "project", "introduction", "intro", "part", "module", "advanced",
+    "basic", "basics", "foundations", "essentials", "overview", "new", "my",
+    "what", "why", "how", "when", "who", "where", "is", "are", "was", "does",
+    "this", "that", "these", "those", "it", "its", "you", "your", "we", "our",
+    "one", "two", "three", "four", "five", "six", "every", "each", "all",
+    "use", "using", "used", "make", "makes", "get", "gets", "can", "will",
+    "lesson", "chapter", "section", "unit", "week", "day", "case", "cases",
+    # Short function words. These MUST be complete, because the minimum token
+    # length is two rather than three so that "AI" survives — the trade is a
+    # precise stoplist here instead of a blunt length rule that silently drops
+    # the subject.
+    "of", "to", "in", "on", "at", "by", "as", "be", "do", "go", "if", "no",
+    "so", "up", "us", "me", "he", "am", "an", "vs", "via", "per", "not",
+    "but", "out", "off", "own", "too", "any", "few", "may", "now", "then",
+    "than", "them", "they", "their", "there", "here", "over", "under",
+    "between", "within", "after", "before", "during", "through", "toward",
+}
+
+
+def _seed_terms(text: str, cap: int = 8) -> list[str]:
+    """Distinctive words from a phrase, order preserved, duplicates dropped.
+
+    TWO-LETTER WORDS ARE KEPT. An earlier version required three, which silently
+    dropped "AI" — and a lens for a subject that cannot name the subject is the
+    exact defect this codebase already carries a scar for: the AI focus once
+    matched only the spelled-out form and caught 23 briefs out of 4,103. Real
+    two-letter stopwords are excluded by name above, which is cheap and exact.
+    """
+    seen, out = set(), []
+    for w in re.findall(r"[A-Za-z][A-Za-z\-']+", text or ""):
+        lw = w.lower()
+        if lw in _SEED_STOP or lw in seen or len(lw) < 2:
+            continue
+        seen.add(lw)
+        out.append(lw)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def _recurring_terms(text: str, min_count: int = 2, cap: int = 6) -> list[str]:
+    """Words a body of text uses REPEATEDLY — its vocabulary, not its prose.
+
+    Thickening an axis from lesson titles with every word in them imported the
+    prose around the subject: "atlas", "questions", "medicine" from one title
+    each. A term earns its place by recurring, which needs no growing stoplist
+    and keeps working on a course about something nobody anticipated.
+    """
+    counts: dict[str, int] = {}
+    for w in re.findall(r"[A-Za-z][A-Za-z\-']+", text or ""):
+        lw = w.lower()
+        if lw in _SEED_STOP or len(lw) < 2:
+            continue
+        counts[lw] = counts.get(lw, 0) + 1
+    ranked = sorted((w for w, n in counts.items() if n >= min_count),
+                    key=lambda w: (-counts[w], w))
+    return ranked[:cap]
+
+
+def _seed_axes(title: str, extra: str = "", detail: str = "") -> tuple[str, str]:
+    """Two comma-separated axes, derived from how the thing is named.
+
+    `extra` is the body text a course or project carries — lesson titles, a
+    description. It is used to THICKEN an axis the title already established,
+    never to invent a third: a lens is only useful if the researcher can see why
+    each word is in it.
+    """
+    parts = [p.strip() for p in _AXIS_SPLIT.split(title or "") if p.strip()]
+    if len(parts) >= 2:
+        a, b = parts[0], " ".join(parts[1:])
+    else:
+        a, b = (title or "").strip(), ""
+
+    g1 = _seed_terms(a, cap=4)
+    g2 = _seed_terms(b, cap=4) if b else []
+
+    # Thicken from the body's RECURRING words only, and never with a term
+    # already on the other axis — a word on both sides makes the AND meaningless.
+    pool = [w for w in _recurring_terms(extra + " " + detail)
+            if w not in g1 and w not in g2]
+    target = g2 if g2 else g1
+    for w in pool:
+        if len(target) >= 7:
+            break
+        target.append(w)
+    return ", ".join(g1), ", ".join(g2)
+
+
+@router.get("/api/focus/seed-options", response_class=JSONResponse)
+async def focus_seed_options():
+    """What a focus can be seeded from: live projects and live courses."""
+    from db import db_query
+    projects = db_query(
+        "SELECT project_id AS ref, title FROM projects "
+        "WHERE COALESCE(status,'') IN ('active','in_progress') "
+        "ORDER BY COALESCE(last_session_at,'') DESC", default=[]) or []
+    courses = db_query(
+        "SELECT slug AS ref, title FROM learning_courses "
+        "WHERE status IN ('active','in_progress','idea') ORDER BY title",
+        default=[]) or []
+    return JSONResponse({
+        "projects": [dict(r) for r in projects],
+        "courses": [dict(r) for r in courses],
+    })
+
+
+@router.get("/api/focus/seed", response_class=JSONResponse)
+async def focus_seed(kind: str, ref: str):
+    """The form values a project or course implies. Nothing is written."""
+    from db import db_query
+    if kind == "course":
+        row = (db_query(
+            "SELECT title, COALESCE(category,'') AS cat, "
+            "       COALESCE(next_lesson,'') AS nxt FROM learning_courses "
+            "WHERE slug = ?", (ref,), default=[]) or [None])[0]
+        if not row:
+            return JSONResponse({"status": "error",
+                                 "message": "No such course."}, status_code=404)
+        # Lesson titles are the course's own vocabulary — a far better source of
+        # keywords than anything guessed from the title alone.
+        body = ""
+        try:
+            from routers.learning import _load_lessons_json
+            data = _load_lessons_json(ref) or {}
+            body = " ".join((l.get("title") or "")
+                            for l in (data.get("lessons") or [])[:24])
+        except Exception:
+            log.warning("[focus] could not read lessons for %s", ref, exc_info=True)
+        g1, g2 = _seed_axes(row["title"], body, row["cat"])
+        subtitle = f"Staying current on what this course covers"
+    elif kind == "project":
+        row = (db_query(
+            "SELECT title, COALESCE(description,'') AS d, COALESCE(domain,'') AS dom "
+            "FROM projects WHERE project_id = ?", (ref,), default=[]) or [None])[0]
+        if not row:
+            return JSONResponse({"status": "error",
+                                 "message": "No such project."}, status_code=404)
+        tasks = " ".join((r["title"] or "") for r in db_query(
+            "SELECT title FROM tasks WHERE project_id = ? "
+            "AND COALESCE(status,'') NOT IN ('done','cancelled') LIMIT 20",
+            (ref,), default=[]) or [])
+        g1, g2 = _seed_axes(row["title"], row["d"] + " " + tasks, row["dom"])
+        subtitle = "Staying current on what this project touches"
+    else:
+        return JSONResponse({"status": "error",
+                             "message": "Unknown kind."}, status_code=400)
+
+    return JSONResponse({"status": "ok", "title": row["title"],
+                         "subtitle": subtitle, "group1": g1, "group2": g2,
+                         "note": "Seeded from your own work — edit the boxes and "
+                                 "watch the preview before you commit."})
+
+
+@router.post("/api/focus/shortcut", response_class=JSONResponse)
+async def focus_shortcut(kind: str = Form(...), ref: str = Form(...)):
+    """Put a course or a project on the shelf as itself.
+
+    Asked for 2026-09-14: "I also want the option that a Focus is just the course
+    itself, if I click it it opens the course."
+
+    A focus is normally a LENS — a saved query owning no content. This is the
+    other thing a shelf slot can be: a shortcut to something you already have.
+    The shelf is three things you are currently attending to, and a course you
+    are working through is one of those.
+
+    It lives in `focus_areas` rather than in a second shelf, so the slot limit,
+    the ordering and the activate/archive controls keep working untouched. It
+    stores no URL: where a course opens is decided by `_launch_target` at render
+    time, because stored course URLs are exactly what drifted into pointing at a
+    repository and at a 404.
+    """
+    from db import db_query, db_execute
+    F = _f()
+
+    if kind == "course":
+        row = (db_query("SELECT slug, title FROM learning_courses WHERE slug = ?",
+                        (ref,), default=[]) or [None])[0]
+    elif kind == "project":
+        row = (db_query("SELECT project_id AS slug, title FROM projects "
+                        "WHERE project_id = ?", (ref,), default=[]) or [None])[0]
+    else:
+        return JSONResponse({"status": "error",
+                             "message": "That is not something a shelf slot can hold."},
+                            status_code=400)
+    if not row:
+        return JSONResponse({"status": "error", "message": "No such item."},
+                            status_code=404)
+
+    # The shelf refuses a fourth rather than quietly evicting one: which subject
+    # loses your attention is your call. Same rule the lens path already follows.
+    active = db_query("SELECT slug, title, COALESCE(shelf_slot,99) AS s "
+                      "FROM focus_areas WHERE state = 'active' ORDER BY s",
+                      default=[]) or []
+    slug = f"{kind}-{ref}"[:120]
+    existing = db_query("SELECT slug, state FROM focus_areas WHERE slug = ?",
+                        (slug,), default=[]) or []
+    if not existing and len(active) >= F.MAX_SHELF:
+        names = ", ".join(a["title"] for a in active)
+        return JSONResponse({
+            "status": "full",
+            "message": (f"The shelf is full ({F.MAX_SHELF} of {F.MAX_SHELF}): "
+                        f"{names}. Take one off first — which one loses your "
+                        f"attention is your call, not Metis's."),
+        }, status_code=409)
+
+    taken = {a["s"] for a in active}
+    slot = next((n for n in range(1, F.MAX_SHELF + 1) if n not in taken), F.MAX_SHELF)
+    now = _now()
+    if existing:
+        db_execute(
+            "UPDATE focus_areas SET state='active', shelf_slot=?, entry_kind=?, "
+            "target_ref=?, title=?, activated_at=? WHERE slug=?",
+            (slot, kind, ref, row["title"], now, slug))
+    else:
+        db_execute(
+            "INSERT INTO focus_areas (slug, title, subtitle, state, shelf_slot, "
+            "keyword_groups, entry_kind, target_ref, created_at, activated_at) "
+            "VALUES (?,?,?,'active',?,'[]',?,?,?,?)",
+            (slug, row["title"], f"Opens the {kind} itself", slot, kind, ref,
+             now, now))
+    return JSONResponse({"status": "ok", "slug": slug, "slot": slot,
+                         "message": f"{row['title']} is on your shelf — "
+                                    f"clicking it opens the {kind}."})

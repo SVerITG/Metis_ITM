@@ -1,0 +1,14 @@
+{
+  "name": "Test Colleague",
+  "institution": "Institute of Tropical Medicine Antwerp",
+  "role": "Postdoctoral researcher",
+  "field": "maternal health, health systems research",
+  "methods": "qualitative interviews, mixed methods, cost-effectiveness analysis",
+  "news_terms": "global health financing, health workforce",
+  "tools": "NVivo, R",
+  "feedback_style": "direct",
+  "challenge_level": "balanced",
+  "output_length": "concise",
+  "projects": [{"name": "Midwife retention study", "category": "Article", "folder": ""}],
+  "language": "English"
+}

@@ -1,0 +1,121 @@
+<!--
+  teach_courses.html — Course cards with alerts and tools.
+  Replaces the #teach-courses-list placeholder via HTMX.
+-->
+<div id="teach-courses-list" class="row g-3">
+
+{% if not courses %}
+  <div class="col-12">
+    <div class="panel panel-pad" style="text-align:center;padding:var(--m-space-7) var(--m-space-6);border:1px dashed var(--m-line);background:var(--m-surface-soft);">
+      <svg class="u-mb-4" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="var(--m-accent)" stroke-width="1.5"
+           stroke-linecap="round" stroke-linejoin="round" style="display:block;margin-left:auto;margin-right:auto;">
+        <rect x="2" y="3" width="20" height="14" rx="2"/>
+        <line x1="8" y1="21" x2="16" y2="21"/>
+        <line x1="12" y1="17" x2="12" y2="21"/>
+      </svg>
+      <h3 class="ed" style="font-size:var(--t-h4);margin:0 0 var(--m-space-2);">No courses yet</h3>
+      <p class="ed" style="font-size:var(--t-body);color:var(--m-muted);max-width:400px;margin:0 auto;">
+        Use the course builder to create your first course, or import an existing one from the intake form above.
+      </p>
+    </div>
+  </div>
+
+{% else %}
+  {% for course in courses %}
+  <div class="col-12 col-xl-6">
+    <div class="card h-100">
+      <div class="card-body">
+
+        <!-- Course header -->
+        <div class="d-flex align-items-start justify-content-between mb-2">
+          <div>
+            <div class="fw-semibold">{{ course.title }}</div>
+            <div class="text-muted small">
+              {% if course.code %}{{ course.code }} · {% endif %}
+              {% if course.semester %}{{ course.semester }}{% endif %}
+              {% if course.student_count %} · {{ course.student_count }} students{% endif %}
+            </div>
+          </div>
+          <span class="badge bg-primary-subtle text-primary ms-2">
+            <i class="bi bi-mortarboard"></i>
+          </span>
+        </div>
+
+        {% if course.description %}
+        <p class="text-muted small mb-3">{{ course.description }}</p>
+        {% endif %}
+
+        <!-- Alert panels (load on demand) -->
+        <div class="row g-2 mb-3">
+
+          <!-- Literature alerts -->
+          <div class="col-12 col-sm-6">
+            <div class="card bg-body-secondary border-0 p-2"
+                 id="lit-alerts-{{ course.id }}"
+                 hx-get="/api/partial/teach/lit-alerts/{{ course.id }}"
+                 hx-trigger="intersect once"
+                 hx-swap="innerHTML">
+              <div class="text-muted small placeholder-glow">
+                <i class="bi bi-book me-1"></i>
+                <span class="placeholder col-6"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- News alerts -->
+          <div class="col-12 col-sm-6">
+            <div class="card bg-body-secondary border-0 p-2"
+                 id="news-alerts-{{ course.id }}"
+                 hx-get="/api/partial/teach/news-alerts/{{ course.id }}"
+                 hx-trigger="intersect once"
+                 hx-swap="innerHTML">
+              <div class="text-muted small placeholder-glow">
+                <i class="bi bi-newspaper me-1"></i>
+                <span class="placeholder col-6"></span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Action buttons — Teaching tools (creates prompts to paste into Claude Code) -->
+        <div class="d-flex flex-wrap gap-2">
+          <button class="btn btn--primary btn--sm"
+                  title="Create a lecture slide deck with speaker notes"
+                  onclick="openCourseSlides({{ course.id }}, '{{ course.title | e }}')">
+            <i class="bi bi-easel2 me-1"></i>Slides
+          </button>
+          <button class="btn btn--sec btn--sm"
+                  title="One-page lecture guide: objectives, key concepts, activities, assessment"
+                  onclick="openTeachingBrief({{ course.id }}, '{{ course.title | e }}')">
+            <i class="bi bi-journal-text me-1"></i>Teaching brief
+          </button>
+          <button class="btn btn--sec btn--sm"
+                  title="Build a graded exam or assessment"
+                  onclick="openAssessmentBuilder({{ course.id }}, '{{ course.title | e }}')">
+            <i class="bi bi-clipboard-check me-1"></i>Assessment
+          </button>
+          <button class="btn btn--sec btn--sm"
+                  title="Generate a student practice question bank"
+                  onclick="openQuestionBank({{ course.id }}, '{{ course.title | e }}')">
+            <i class="bi bi-question-circle me-1"></i>Q-bank
+          </button>
+          <button class="btn btn--sec btn--sm"
+                  title="Identify curriculum gaps vs recent literature and field standards"
+                  onclick="openGapAnalysis({{ course.id }}, '{{ course.title | e }}')">
+            <i class="bi bi-search me-1"></i>Gap analysis
+          </button>
+          <button class="btn btn--sec btn--sm"
+                  title="General teaching chat — pedagogy, content, explanations"
+                  onclick="openCourseChat({{ course.id }}, '{{ course.title | e }}')">
+            <i class="bi bi-chat-dots me-1"></i>Chat
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+{% endif %}
+
+</div>

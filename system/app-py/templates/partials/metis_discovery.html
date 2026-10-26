@@ -1,0 +1,17 @@
+<div class="panel u-mb-4" id="metis-discovery-card" style="padding:var(--m-space-4) var(--m-space-5);">
+  <div class="u-row u-row--between" style="gap:var(--m-space-3);flex-wrap:wrap;">
+    <div>
+      <div class="u-label u-label--accent u-mb-1" style="letter-spacing:0.14em;">FEATURE TIPS</div>
+      <div style="font-size:var(--t-meta);color:var(--m-ink);line-height:1.5;max-width:46ch;">
+        {% if d_enabled %}On — Metis surfaces a capability the moment it becomes useful: one at a time, never repeated, and never about features you already use.{% else %}Off — Metis won't surface feature tips as you work.{% endif %}
+      </div>
+      <div class="u-label" style="margin-top:var(--m-space-2);letter-spacing:0.04em;">
+        {{ d_shown }}/{{ d_total }} discovered · {{ d_adopted }} now in use{% if d_mode == 'power' %} · power-user mode{% endif %}
+      </div>
+    </div>
+    <button class="btn btn--sec u-mono" hx-post="/api/metis/discovery/toggle" hx-target="#metis-discovery-card" hx-swap="outerHTML"
+            style="letter-spacing:0.1em;padding:var(--m-space-1) var(--m-space-4);color:var(--m-text);white-space:nowrap;">
+      {% if d_enabled %}TURN OFF{% else %}TURN ON{% endif %}
+    </button>
+  </div>
+</div>

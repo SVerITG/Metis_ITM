@@ -1,0 +1,38 @@
+{# Memory search results — semantic / keyword across episodic memory #}
+{% set type_colors = {
+  'discovery':      'm-info',
+  'decision':       'm-ochre-deep',
+  'implementation': 'm-ok',
+  'issue':          'm-alert',
+  'note':           'm-muted',
+  'idea':           'm-accent',
+} %}
+
+{% if not results %}
+<div class="empty-row">Nothing found for <em>{{ q }}</em>. Try a different phrase or capture more observations.</div>
+{% else %}
+<div class="u-label" style="padding:var(--m-space-3) var(--m-space-4) var(--m-space-2);">{{ results|length }} RESULTS FOR "{{ q|upper }}"</div>
+{% for r in results %}
+{% set cls = r.classification or r.event_type or 'note' %}
+{% set color = type_colors.get(cls, 'm-muted') %}
+<div class="u-rule" style="padding:var(--m-space-3) var(--m-space-4);display:grid;grid-template-columns:72px 1fr;gap:var(--m-space-3);">
+  <div>
+    <div style="font-family:var(--m-mono);font-size:11px;letter-spacing:0.1em;color:var(--{{ color }});font-weight:600;text-transform:uppercase;">{{ cls[:5] }}</div>
+    <div class="u-label" style="margin-top:var(--m-space-1);">{{ (r.created_at or '')[:10] }}</div>
+    {% if r.score is not none %}
+    <div class="u-mono" style="color:var(--m-muted);margin-top:1px;">{{ (r.score * 100)|int }}%</div>
+    {% endif %}
+  </div>
+  <div>
+    <div style="font-size:var(--t-small);color:var(--m-ink);line-height:1.5;">{{ r.content | clip(200) }}</div>
+    {% if r.concepts %}
+    <div style="margin-top:var(--m-space-1);display:flex;flex-wrap:wrap;gap:var(--m-space-1);">
+      {% for c in r.concepts[:3] %}
+      <span class="u-label" style="padding:1px 5px;background:var(--m-surface-2);border:1px solid var(--m-rule);border-radius:var(--m-radius-sm);">{{ c }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}

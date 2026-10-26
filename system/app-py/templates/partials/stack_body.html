@@ -1,0 +1,115 @@
+{#- stack_body.html — the pile, filtered.
+
+    The surface the researcher described: "they get categorized for future reading so they
+    become a stack of things to read connected to the News and Library
+    surfaces". It is NOT a fourth copy of the news list — it reads
+    `reading_stack`, the only table that knows what he decided about an item,
+    and it renders the same `item()` every other list uses.
+
+    NOTE the import. `_item.html` exports a macro called `tags`, and this
+    template's context already has a variable called `tags` (the tag counts for
+    the filter bar). Importing it here would shadow one with the other —
+    silently, and only on the line that happened to use it. -#}
+{% from "partials/_item.html" import item %}
+{% from "partials/_whatsnew.html" import whatsnew %}
+{% set T = "#stack-body" %}
+{% set BACK = "stack" %}
+
+{#- A QUEUE, NOT FOUR BUCKETS. These four states were rendered as four equal
+    filters, which is why the reading pile never felt like something you could
+    get to the end of. They are a journey: what is in front of you, what you
+    chose to keep, and what is behind you. Ordered that way, with the archive
+    set apart, so "to read" reads as a queue with a floor rather than one tab
+    among four.
+
+    The lead line is what makes finishing legible — the same reason Today needed
+    a terminal state. A number in front of you that can reach zero is a
+    different object from a number that only grows. -#}
+<p class="stk-lead">
+  <b class="tnum">{{ counts['later'] }}</b> in front of you
+  {%- if counts['saved'] %} · <b class="tnum">{{ counts['saved'] }}</b> kept{% endif %}
+  {%- set done = counts['read'] + counts['declined'] + counts.get('dismissed', 0) %}
+  {%- if done %} · <span class="stk-lead-done"><b class="tnum">{{ done }}</b> behind you</span>{% endif %}
+</p>
+
+<div class="toolbar">
+  <div class="seg" role="group" aria-label="Where in the queue">
+    {% for key, label in [('later', 'To read'), ('saved', 'Kept')] %}
+    <a href="/stack?state={{ key }}{% if tag %}&tag={{ tag }}{% endif %}"
+       aria-current="{{ 'true' if state == key else 'false' }}"
+       hx-get="/api/partial/stack/body?state={{ key }}{% if tag %}&tag={{ tag }}{% endif %}"
+       hx-target="#stack-body" hx-swap="innerHTML" hx-push-url="false">
+      {{ label }} <b>{{ counts[key] }}</b>
+    </a>
+    {% endfor %}
+  </div>
+
+  {#- Set apart, because what is behind you is not another queue to work.
+
+      `Dismissed` belongs HERE and not beside "To read": it is cleared, not
+      queued. It is listed at all because a verdict with no list behind it is a
+      deletion wearing a softer word — the researcher asked for all four to be
+      browsable, and this is the one that would otherwise have been a hole. -#}
+  <div class="seg seg--past" role="group" aria-label="Already dealt with">
+    {% for key, label in [('read', 'Read'), ('dismissed', 'Dismissed'), ('declined', 'Not for me')] %}
+    <a href="/stack?state={{ key }}{% if tag %}&tag={{ tag }}{% endif %}"
+       aria-current="{{ 'true' if state == key else 'false' }}"
+       hx-get="/api/partial/stack/body?state={{ key }}{% if tag %}&tag={{ tag }}{% endif %}"
+       hx-target="#stack-body" hx-swap="innerHTML" hx-push-url="false">
+      {{ label }} <b>{{ counts[key] }}</b>
+    </a>
+    {% endfor %}
+  </div>
+
+  {% if whatsnew_stack %}
+  <div class="toolbar-group">{{ whatsnew(whatsnew_stack, "items", "#stack-body") }}</div>
+  {% endif %}
+
+  {% if tags %}
+  <div class="toolbar-group">
+    <a class="badge badge--{{ 'accent' if not tag else 'tag' }}"
+       href="/stack?state={{ state }}" style="text-decoration:none;"
+       hx-get="/api/partial/stack/body?state={{ state }}"
+       hx-target="#stack-body" hx-swap="innerHTML" hx-push-url="false">all</a>
+    {% for t, n in tags %}
+    <a class="badge badge--{{ 'accent' if tag == t else 'tag' }}"
+       href="/stack?state={{ state }}&tag={{ t }}" style="text-decoration:none;"
+       hx-get="/api/partial/stack/body?state={{ state }}&tag={{ t }}"
+       hx-target="#stack-body" hx-swap="innerHTML" hx-push-url="false">{{ t }} {{ n }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+{% if not items %}
+<div class="panel" style="padding:var(--d-panel) var(--m-space-5);">
+  <p style="margin:0;font-size:var(--t-body);line-height:1.65;color:var(--m-muted);">
+    {% if state == 'later' %}
+      Nothing filed to read. On <a href="/news" class="u-link">News</a> or
+      <a href="/" class="u-link">Today</a>, press the bookmark on anything you want to
+      come back to and it lands here — which is the point of the split: Today is for
+      seeing what is new, this is for reading it.
+      <br><br>
+      Flag one <strong>crucial</strong> and it also appears on Today the next morning,
+      under “what to read first”. One line, never a list.
+    {% elif state == 'declined' %}
+      Nothing declined yet. What you mark <strong>Not for me</strong> comes here —
+      folded away, never deleted, so you can always see what you passed on.
+    {% elif state == 'saved' %}
+      Nothing kept yet. <strong>Keep</strong> is for things you want to hold on to
+      rather than read once — they stay here after the feed has moved on.
+    {% else %}
+      Nothing marked read yet. Items you finish land here, so this becomes a
+      record of what you actually got through.
+    {% endif %}
+  </p>
+</div>
+{% else %}
+<div class="list--rows">
+  {% for i in items %}
+  {{ item(i.kind, {'id': i.item_id, 'title': i.title, 'url': i.url,
+                   'source': i.source or i.kind, 'when': i.state_at[:10]},
+          i, T, BACK) }}
+  {% endfor %}
+</div>
+{% endif %}

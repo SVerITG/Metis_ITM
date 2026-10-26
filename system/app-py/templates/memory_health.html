@@ -1,0 +1,60 @@
+<div id="tab-content">
+  <div style="max-width:900px;margin:0 auto;padding:var(--m-space-5) var(--m-space-4);">
+
+    <!-- Header -->
+    <div class="u-mb-5">
+      <h2 style="font-family:var(--m-display);font-size:var(--t-h3);font-weight:700;color:var(--m-ink);margin:0 0 var(--m-space-1);">Memory Health</h2>
+      <p style="font-family:var(--m-display);font-size:var(--t-meta);color:var(--m-muted);margin:0;">
+        What Metis remembers — across all layers, agents, and projects.
+      </p>
+    </div>
+
+    <!-- Layer overview cards -->
+    <div hx-get="/api/partial/memory/overview"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="text-align:center;padding:var(--m-space-7);color:var(--m-muted);font-size:var(--t-meta);">
+        Loading memory overview...
+      </div>
+    </div>
+
+    <!-- Two-column layout for details -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--m-space-5);margin-top:var(--m-space-5);">
+
+      <!-- Left: Agent wisdom + Staleness -->
+      <div class="u-col" style="gap:var(--m-space-5);">
+
+        <div style="background:var(--m-surface);border-radius:8px;padding:var(--m-space-4);border:1px solid var(--m-rule-soft);"
+             hx-get="/api/partial/memory/agents"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+          <div style="text-align:center;padding:var(--m-space-5);color:var(--m-muted);font-size:var(--t-micro);">
+            Loading agent data...
+          </div>
+        </div>
+
+        <div style="background:var(--m-surface);border-radius:8px;padding:var(--m-space-4);border:1px solid var(--m-rule-soft);"
+             hx-get="/api/partial/memory/staleness"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+          <div style="text-align:center;padding:var(--m-space-5);color:var(--m-muted);font-size:var(--t-micro);">
+            Loading freshness data...
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Right: Topic coverage -->
+      <div style="background:var(--m-surface);border-radius:8px;padding:var(--m-space-4);border:1px solid var(--m-rule-soft);"
+           hx-get="/api/partial/memory/topics"
+           hx-trigger="load"
+           hx-swap="innerHTML">
+        <div style="text-align:center;padding:var(--m-space-5);color:var(--m-muted);font-size:var(--t-micro);">
+          Loading topic data...
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div>

@@ -1,0 +1,98 @@
+{% from "partials/_section.html" import sec_label %}
+{# Memory overview — 8-layer picture + curated stats + filter chips + archive control.
+   Inputs: layers[], total_all, total_memories, week_count, oldest, by_type{}, archive_days #}
+
+{# Full picture across every layer — the whole store, not just curated entries (S.0c/S.4) #}
+<div class="grid grid-4 u-mb-3" style="gap:var(--m-space-3);">
+  {% for l in layers %}
+  <div class="panel panel--md">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+      <span class="kicker" style="padding:0;color:{{ 'var(--m-accent)' if l.count else 'var(--m-muted)' }};">{{ l.kicker }}</span>
+      <span style="font-family:var(--m-mono);font-size:var(--t-h4);font-weight:600;color:var(--m-ink);">{{ '{:,}'.format(l.count) }}</span>
+    </div>
+    <div class="u-title" style="font-weight:500;margin:var(--m-space-2) 0 var(--m-space-1);">{{ l.name }}</div>
+    <div class="u-mb-3" style="font-family:var(--m-display);font-size:var(--t-meta);color:var(--m-muted);line-height:1.4;text-wrap:pretty;">{{ l.desc }}</div>
+    <div style="height:3px;background:var(--m-rule-soft);border-radius:var(--m-radius-sm);overflow:hidden;">
+      <div style="height:100%;width:{{ l.pct }}%;background:{{ 'var(--m-accent)' if l.count else 'var(--m-rule)' }};border-radius:2px;transition:width .4s;"></div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+<div class="u-mb-5 u-mono" style="letter-spacing:0.16em;text-transform:uppercase;color:var(--m-muted);text-align:right;">
+  {{ '{:,}'.format(total_all) }} entries held across every layer
+</div>
+
+{# The Procedural layer used to be a count and nothing else. These are the ways of
+   working Metis actually applies, so they have to be readable — and correctable. #}
+{{ sec_label("How things are done here", tail="PROCEDURAL MEMORY") }}
+{#- innerHTML, not outerHTML: this element carries the layout/styling classes and the partial returns bare content, so an outerHTML swap deleted the wrapper and the panel silently lost its border, padding or grid on load. See tools/check_htmx_swaps.py. -#}
+<div class="u-mb-5" hx-get="/api/partial/metis/procedures" hx-trigger="load" hx-swap="innerHTML">
+  <div class="panel panel-pad skeleton" style="min-height:120px;"></div>
+</div>
+
+{# Curated "Memory Palace" detail — the entries you and Metis chose to keep #}
+{{ sec_label("Curated memory", tail="MEMORY PALACE DETAIL") }}
+<div class="token-stats-row">
+  <div class="token-stat">
+    <div class="token-stat-num">{{ total_memories }}</div>
+    <div class="token-stat-label">curated entries</div>
+  </div>
+  <div class="token-stat">
+    <div class="token-stat-num">{{ week_count }}</div>
+    <div class="token-stat-label">this week</div>
+  </div>
+  <div class="token-stat">
+    <div class="token-stat-num" style="font-size:var(--t-h4);">{{ oldest or '—' }}</div>
+    <div class="token-stat-label">oldest entry</div>
+  </div>
+  <div class="token-stat">
+    <div class="token-stat-num">{{ by_type | length }}</div>
+    <div class="token-stat-label">distinct types</div>
+  </div>
+</div>
+
+<div class="mem-filter-strip" id="mem-filter-strip">
+  {% set filters = [
+    ('all', 'All'),
+    ('discovery', 'Discovery'),
+    ('decision', 'Decision'),
+    ('implementation', 'Implementation'),
+    ('issue', 'Issue'),
+    ('note', 'Note'),
+    ('idea', 'Idea'),
+  ] %}
+  {% for slug, label in filters %}
+  <button class="mem-filter" data-type="{{ slug }}" data-active="{{ 'true' if slug == 'all' else 'false' }}"
+          onclick="filterMemoryStream('{{ slug }}', this)"
+          title="Show {{ label.lower() }} only">
+    {{ label }}{% if slug != 'all' and by_type.get(slug) %} · {{ by_type.get(slug) }}{% endif %}
+  </button>
+  {% endfor %}
+</div>
+
+<div class="metis-setting-row">
+  <div>
+    <div class="ms-title">Archive memories older than</div>
+    <div class="ms-help">Older entries are moved to a cold archive on disk and hidden from the stream. Set to "Never" to keep everything visible.</div>
+  </div>
+  <div class="ms-control">
+    <select id="memory-archive-select" onchange="saveMemoryArchive(this.value)">
+      <option value="0"   {% if archive_days == 0   %}selected{% endif %}>Never</option>
+      <option value="30"  {% if archive_days == 30  %}selected{% endif %}>30 days</option>
+      <option value="60"  {% if archive_days == 60  %}selected{% endif %}>60 days</option>
+      <option value="90"  {% if archive_days == 90  %}selected{% endif %}>90 days</option>
+      <option value="180" {% if archive_days == 180 %}selected{% endif %}>180 days</option>
+      <option value="365" {% if archive_days == 365 %}selected{% endif %}>1 year</option>
+    </select>
+  </div>
+</div>
+
+<div class="metis-setting-row">
+  <div>
+    <div class="ms-title">Export memories</div>
+    <div class="ms-help">A snapshot of the memory store, written to <code class="u-mono">journal/exports/</code>.</div>
+  </div>
+  <div class="ms-control">
+    <button class="btn btn--sec btn--caps" onclick="openMetisExport()">Export</button>
+  </div>
+</div>

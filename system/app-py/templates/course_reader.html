@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ course_title }} — Metis</title>
+<link rel="icon" type="image/png" href="/static/metis-icon.png">
+<!-- Fraunces and Manrope are self-hosted by the copied stylesheet (vendor/fonts),
+     as the source course does, so the reader keeps its typefaces offline or
+     behind a proxy. Only the mono face still comes from the web; without it code
+     falls back to the system monospace, which is what that course does too. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<!--
+  The source course's own stylesheet, copied verbatim by
+  tools/sync-course-reader-css.sh, plus markdown prose rules written in its
+  idiom. the researcher asked for an exact copy of that styling, and this is the literal
+  form of that: the same CSS, not an approximation of it.
+
+  The dashboard's /static/styles.css is deliberately NOT loaded here, and that
+  is also the scroll fix. It sets `html, body { height: 100% }` and
+  `body { overflow: hidden }` because the dashboard is an app shell that scrolls
+  an inner pane. The reader inherited that lock, so the page could never scroll
+  however the lesson was laid out — which is why the original lesson partial was
+  built as an inner scroller in the first place. Dropping the dashboard
+  stylesheet removes the lock and delivers the styling in one move.
+
+  app.js is not loaded either: it is the dashboard controller and expects
+  dashboard DOM. The two functions the reader actually needs are at the bottom
+  of this file.
+-->
+<link rel="stylesheet" href="/static/course-reader.css?v={{ asset_v }}">
+</head>
+<body class="course-reader">
+
+<div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <button id="sidebar-toggle" class="icon-btn" type="button" aria-label="Toggle contents"
+            aria-controls="sidebar" aria-expanded="true" title="Contents">
+      <span></span><span></span><span></span>
+    </button>
+    <div>
+      <div class="brand-title">{{ course_title }}</div>
+      <div class="brand-sub">Metis · course reader</div>
+    </div>
+  </div>
+  <nav class="topbar-nav" id="reader-tabs" aria-label="Course sections">
+    {% for t in tabs %}
+    <button class="nav-btn{% if loop.first %} active{% endif %}"
+            type="button" data-tab="{{ t.id }}">{{ t.label }}</button>
+    {% endfor %}
+  </nav>
+  <div class="topbar-right">
+    <a class="btn btn-secondary btn-small reader-back" href="/tab/learning">← Back to Learning</a>
+  </div>
+</header>
+
+<div class="shell-body">
+  <aside id="sidebar" class="sidebar" aria-label="Course contents">
+    <div class="sidebar-content" id="course-overview-panel">
+      <div class="rd-loading rd-loading--side">Loading…</div>
+    </div>
+  </aside>
+
+  <main id="main" class="main">
+    <section class="view active">
+      <div class="page-wrap" id="lesson-reader-panel">
+        <div class="card rd-loading">Loading…</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/htmx.min.js"></script>
+<script>
+/* The reader needs exactly two things from the dashboard's app.js, so they live
+   here rather than pulling in the whole controller. */
+function showToast(html, duration) {
+  var root = document.getElementById('toast-root');
+  if (!root) return;
+  var t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = html;
+  root.appendChild(t);
+  setTimeout(function () { t.remove(); }, duration || 4500);
+}
+
+async function completeLesson(slug, lessonId, btn) {
+  try {
+    if (btn) btn.disabled = true;
+    var res = await fetch('/api/course/' + slug + '/lesson/' + lessonId + '/complete', { method: 'POST' });
+    var data = await res.json();
+    if (data.status === 'ok') {
+      if (btn) btn.textContent = 'Marked as read';
+      showToast('Lesson marked as read — ' + data.progress_pct + '% through the course.');
+      if (data.next_lesson_id) {
+        htmx.ajax('GET', '/api/course/' + slug + '/lesson/' + data.next_lesson_id,
+                  { source: '#lesson-reader-panel', target: '#lesson-reader-panel', swap: 'innerHTML' });
+      }
+      htmx.ajax('GET', '/api/course/' + slug + '/overview',
+                { source: '#course-overview-panel', target: '#course-overview-panel', swap: 'innerHTML' });
+    }
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    showToast("I couldn't save your lesson progress — try again.");
+  }
+}
+
+var SLUG = {{ slug | tojson }};
+var INITIAL_LESSON = {{ (initial_lesson or '') | tojson }};
+var INITIAL_TAB    = {{ (initial_tab or '') | tojson }};
+
+(function () {
+  /* Tabs. One click updates two panes — the sidebar contents and the reading
+     panel, which opens on that tab's index rather than an empty placeholder.
+     Two targets means two requests, so this is scripted rather than done with
+     hx-get on the button. Each call names its own panel as `source`: without
+     one, htmx issues both from <body>, treats the second as a duplicate of the
+     request already in flight there and drops it — so the sidebar filled while
+     the reading panel sat on "Loading…". */
+  function openTab(tab) {
+    htmx.ajax('GET', '/api/course/' + SLUG + '/overview?tab=' + tab,
+              { source: '#course-overview-panel', target: '#course-overview-panel', swap: 'innerHTML' });
+    htmx.ajax('GET', '/api/course/' + SLUG + '/tab/' + tab,
+              { source: '#lesson-reader-panel', target: '#lesson-reader-panel', swap: 'innerHTML' });
+    window.scrollTo(0, 0);
+  }
+  var tabs = document.getElementById('reader-tabs');
+  if (tabs) {
+    tabs.addEventListener('click', function (e) {
+      var b = e.target.closest('.nav-btn');
+      if (!b) return;
+      tabs.querySelectorAll('.nav-btn').forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+      openTab(b.dataset.tab);
+    });
+    /* Normally: land on the first tab's index, rather than a placeholder that
+       made the reader look empty until you picked something.
+
+       But ?lesson=<id> means someone arrived from Today's "Continue" and wants
+       that lesson, not an index. Light its tab, load its sidebar, and open the
+       lesson itself. */
+    if (INITIAL_LESSON && INITIAL_TAB) {
+      var want = tabs.querySelector('.nav-btn[data-tab="' + INITIAL_TAB + '"]');
+      if (want) {
+        tabs.querySelectorAll('.nav-btn').forEach(function (x) { x.classList.remove('active'); });
+        want.classList.add('active');
+      }
+      htmx.ajax('GET', '/api/course/' + SLUG + '/overview?tab=' + INITIAL_TAB,
+                { source: '#course-overview-panel', target: '#course-overview-panel', swap: 'innerHTML' });
+      htmx.ajax('GET', '/api/course/' + SLUG + '/lesson/' + INITIAL_LESSON,
+                { source: '#lesson-reader-panel', target: '#lesson-reader-panel', swap: 'innerHTML' });
+    } else {
+      var first = tabs.querySelector('.nav-btn');
+      if (first) openTab(first.dataset.tab);
+    }
+  }
+})();
+
+(function () {
+  var btn  = document.getElementById('sidebar-toggle');
+  var side = document.getElementById('sidebar');
+  var main = document.getElementById('main');
+
+  /* .sidebar.closed / .main.full is the source course's own toggle idiom. */
+  if (btn && side && main) {
+    btn.addEventListener('click', function () {
+      side.classList.toggle('closed');
+      main.classList.toggle('full');
+      btn.setAttribute('aria-expanded', side.classList.contains('closed') ? 'false' : 'true');
+    });
+    /* On a narrow screen the sidebar overlays the text, so picking a lesson
+       should put it away — otherwise you tap a lesson and still cannot see it. */
+    side.addEventListener('click', function (e) {
+      if (window.matchMedia('(max-width: 900px)').matches && e.target.closest('[hx-get]')) {
+        side.classList.add('closed');
+        main.classList.add('full');
+      }
+    });
+  }
+
+  /* The current-lesson marker. The outline and the lesson arrive as two
+     separate swaps in either order, so after each one the open lesson's id is
+     read off the page and the matching outline row is lit. */
+  function markCurrent() {
+    var page = document.querySelector('#lesson-reader-panel [data-lesson-id]');
+    var id = page ? page.getAttribute('data-lesson-id') : '';
+    document.querySelectorAll('#course-overview-panel .outline-item').forEach(function (row) {
+      var on = !!id && row.getAttribute('data-lesson-id') === id;
+      row.classList.toggle('active', on);
+      if (on) row.setAttribute('aria-current', 'page'); else row.removeAttribute('aria-current');
+    });
+  }
+
+  /* A freshly swapped lesson starts at its title, not wherever the last one
+     was scrolled to. */
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    if (e.target && e.target.id === 'lesson-reader-panel') window.scrollTo(0, 0);
+    markCurrent();
+  });
+
+  document.body.addEventListener('click', function (e) {
+    /* "Mark as read" */
+    var done = e.target.closest('[data-complete-lesson]');
+    if (done) {
+      completeLesson(SLUG, done.getAttribute('data-complete-lesson'), done);
+      return;
+    }
+
+    /* "Back to course" inside a page opens that tab's index, exactly as the
+       topbar tab does, so the two can never disagree. */
+    var back = e.target.closest('[data-open-tab]');
+    if (back) {
+      var tabBtn = document.querySelector('#reader-tabs .nav-btn[data-tab="' + back.getAttribute('data-open-tab') + '"]');
+      if (tabBtn) tabBtn.click();
+      return;
+    }
+
+    /* Mastery check: one answer per question, then the right option and the
+       explanation are shown. A self-check — nothing is sent anywhere. */
+    var choice = e.target.closest('.quiz-item .choice-btn');
+    if (choice && !choice.disabled) {
+      var item = choice.closest('.quiz-item');
+      var correct = item.getAttribute('data-correct');
+      var picked = choice.getAttribute('data-choice');
+      var right = picked === correct;
+      item.querySelectorAll('.choice-btn').forEach(function (b) {
+        b.disabled = true;
+        if (b.getAttribute('data-choice') === correct) b.classList.add('correct');
+      });
+      choice.classList.add('selected');
+      if (!right) choice.classList.add('incorrect');
+      item.classList.add('is-answered');
+      if (right) item.classList.add('is-right');
+      var fb = item.querySelector('.feedback-box');
+      if (fb) {
+        fb.classList.add(right ? 'correct' : 'incorrect');
+        var lead = fb.querySelector('[data-verdict]');
+        if (lead) lead.textContent = right ? 'Correct. ' : 'Not quite — the right answer is marked. ';
+        fb.classList.remove('hidden');
+      }
+      tallyCheck(item.closest('[data-check]'));
+    }
+  });
+
+  function tallyCheck(box) {
+    if (!box) return;
+    var items = box.querySelectorAll('.quiz-item');
+    var answered = box.querySelectorAll('.quiz-item.is-answered').length;
+    var right = box.querySelectorAll('.quiz-item.is-right').length;
+    var total = items.length;
+    var line = right + ' of ' + answered + ' correct · ' + answered + ' of ' + total + ' answered';
+    var tally = box.querySelector('[data-check-tally]');
+    if (tally) tally.textContent = line;
+    var note = document.querySelector('[data-check-note]');
+    if (note) note.textContent = answered === total ? 'done · ' + right + '/' + total + ' right' : answered + '/' + total + ' answered';
+    var step = document.querySelector('[data-check-step]');
+    if (step) {
+      var dot = step.querySelector('.step-dot');
+      var detail = step.querySelector('[data-check-detail]');
+      var state = answered === total ? 'done' : (answered ? 'part' : '');
+      step.classList.remove('done', 'part');
+      if (dot) dot.classList.remove('done', 'part');
+      if (state) { step.classList.add(state); if (dot) dot.classList.add(state); }
+      if (detail) detail.textContent = answered === total ? right + '/' + total : answered + '/' + total;
+    }
+  }
+})();
+</script>
+</body>
+</html>

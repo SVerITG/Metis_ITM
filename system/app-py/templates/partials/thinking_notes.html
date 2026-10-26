@@ -1,0 +1,28 @@
+<!-- thinking_notes.html — Editorial note list -->
+{% if not notes %}
+<div class="panel panel-pad" style="text-align:center;padding:var(--m-space-5) var(--m-space-5);border:1px dashed var(--m-line);">
+  <p class="ed" style="font-size:var(--t-body);color:var(--m-muted);margin:0 0 var(--m-space-2);">No notes yet.</p>
+  <p class="ed" style="font-size:var(--t-small);color:var(--m-muted);margin:0;">
+    Press <kbd>Ctrl+K</kbd> and prefix with <code>n:</code> to capture a note.
+    Or run <code>/metis-notes</code> in Claude Code to add from there.
+  </p>
+</div>
+{% else %}
+<div class="panel">
+  {% for note in notes %}
+  <div class="nb-row">
+    <div class="nb-when">{{ (note.created_at or '')[:10] }} · NOTE</div>
+    <div class="nb-body">{{ note.content }}</div>
+    {% if note.tags %}
+    <div class="nb-foot">
+      <div style="display:flex;gap:var(--m-space-2);">
+        {% for tag in note.tags.split(',')[:3] %}
+        <span class="chip chip--info" style="font-size:var(--t-micro);">{{ tag.strip() }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

@@ -1,0 +1,38 @@
+<!-- knowledge_pdf_stats.html — PDF index stats panel -->
+<div class="u-row u-row--between u-mb-4">
+  <span class="u-label">
+    <span style="color:var(--m-ink);font-weight:600;">{{ total_docs }}</span> DOCUMENTS
+    &nbsp;·&nbsp;
+    <span style="color:var(--m-ink);font-weight:600;">{{ "{:,}".format(total_chunks) }}</span> INDEXED CHUNKS
+  </span>
+  <button class="u-label u-label--wide btn btn--sec hov-edge" style="padding:var(--m-space-1) var(--m-space-3);white-space:nowrap;transition:border-color .15s,color .15s;" hx-post="/api/knowledge/build-index" hx-target="#pdf-index-status" hx-swap="innerHTML" hx-confirm="This will index all PDFs in your library using local AI embeddings. It may take 5–20 minutes. Continue?">
+    REBUILD INDEX
+  </button>
+</div>
+
+{% if rows %}
+<table style="width:100%;border-collapse:collapse;">
+  <thead>
+    <tr class="u-label u-label--wide" style="border-bottom:1px solid var(--m-rule);">
+      <th style="padding:var(--m-space-2) 0;text-align:left;font-weight:400;">Domain</th>
+      <th style="padding:var(--m-space-2) var(--m-space-3);text-align:right;font-weight:400;">Docs</th>
+      <th style="padding:var(--m-space-2) 0 var(--m-space-2) var(--m-space-3);text-align:right;font-weight:400;">Chunks</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr class="u-rule">
+      <td class="u-title u-title--sm" style="padding:var(--m-space-2) 0;">{{ r.domain or '(unknown)' }}</td>
+      <td class="u-label" style="padding:var(--m-space-2) var(--m-space-3);text-align:right;">{{ r.docs }}</td>
+      <td class="u-label" style="padding:var(--m-space-2) 0 var(--m-space-2) var(--m-space-3);text-align:right;">{{ "{:,}".format(r.chunks or 0) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-3) 0;">
+  No PDFs indexed yet. Click <em>Rebuild index</em> above, or ask Metis to run <code>build_pdf_knowledge_db()</code>.
+</div>
+{% endif %}
+
+<div class="u-mono" id="pdf-index-status" style="margin-top:var(--m-space-3);"></div>

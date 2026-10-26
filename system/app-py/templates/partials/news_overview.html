@@ -1,0 +1,207 @@
+{% from "partials/_empty.html" import panel as empty_panel %}
+{# ══════════════════════════════════════════════════════════════════════════════
+   news_overview.html — the opening tab: what is actually happening.
+
+   This is deliberately NOT a card grid. A grid of headlines is what the other
+   tabs are for; an overview has to answer "what is going on" in one screen, and
+   that means RUNNING STORIES rather than individual links. Each row is a story
+   thread — many items collapsed into the thing they are about — with how long it
+   has been running, whether it escalated, and whether you have already been told
+   about it in a briefing you read.
+
+   Buckets are dropped by the route: the 'who' thread mixes crime and celebrity
+   with health because it collects everything that merely named the organisation,
+   which is useless as an overview row.
+   ══════════════════════════════════════════════════════════════════════════════ #}
+
+{% from "partials/_item.html" import actions, tags, tag_datalist %}
+{% set T = "#news-tab-body" %}
+{% set BACK = "news:" ~ active ~ ":" ~ period ~ ":" ~ (view | default("detailed")) %}
+{% include "partials/_news_tabstrip.html" %}
+{{ tag_datalist(all_tags or []) }}
+
+{#- ── THE NEWS PAGE ────────────────────────────────────────────────────────
+    Added 2026-09-04. This tab opened on running stories: each thread showed
+    three items and a "+64 more", which is the three-per-category shape the
+    researcher asked to be rid of — "a mix of all categories... It needs to feel
+    like a news website... max 20 news items that refresh every day regardless
+    if i logged on or read them."
+
+    So twenty items, dealt round-robin across beats, with pictures. The lead
+    runs wide because a page of identical tiles has no entry point; a card with
+    no picture keeps its footprint so the grid does not tear into ragged rows.
+    The running stories move below, folded — the grouping answers a real
+    question and its reasoning is in this file's header, so it is kept rather
+    than replaced.
+
+    Classes are `ovf-` prefixed: `nf-` already belongs to the card grid on the
+    other news tabs, and reusing it put seven duplicated selectors into the
+    stylesheet the first time this was written. -#}
+{% if feed %}
+<div class="ovf">
+  <div class="ovf-head">
+    <h2 class="sec-label" style="margin:0;">Today
+      <span class="sec-label-tail">{{ feed|length }} OF {{ '{:,}'.format(feed_total) }} · {{ feed_beats }} BEATS · {{ feed_images }} WITH A PICTURE</span>
+    </h2>
+  </div>
+
+  {% if lead %}
+  <a class="ovf-lead{% if not lead.has_image %} ovf-lead--flat{% endif %}"
+     href="{{ lead.url or '#' }}"{% if lead.url %} target="_blank" rel="noopener"{% endif %}>
+    {% if lead.has_image %}
+    {#- A STORED URL IS NOT A GUARANTEE. Every sampled URL resolves from this
+        machine, yet tiles still render as a broken-image icon: these are other
+        publishers' servers, and some refuse a hotlink or simply go away. Hiding
+        the element on error leaves the placeholder gradient, which is a tile
+        with no picture rather than a tile that is visibly broken. -#}
+    <span class="ovf-lead-img"><img src="{{ lead.image }}" alt="" loading="eager"
+         decoding="async" onerror="this.closest('.ovf-lead-img').remove()"></span>
+    {% endif %}
+    <span class="ovf-lead-body">
+      <span class="ovf-tag">{{ lead.domain or 'news' }}</span>
+      <span class="ovf-lead-h">{{ lead.title | sci }}</span>
+      {% if lead.summary %}<span class="ovf-lead-sum">{{ lead.summary | prose(220) }}</span>{% endif %}
+      <span class="ovf-when">{{ lead.when }}{% if lead.source %} · {{ lead.source }}{% endif %}</span>
+    </span>
+  </a>
+  {% endif %}
+
+  <div class="ovf-grid">
+    {% for c in rest %}
+    <a class="ovf-card" href="{{ c.url or '#' }}"{% if c.url %} target="_blank" rel="noopener"{% endif %}>
+      <span class="ovf-thumb{% if not c.has_image %} ovf-thumb--none{% endif %}">
+        {% if c.has_image %}<img src="{{ c.image }}" alt="" loading="lazy" decoding="async"
+             onerror="this.parentNode.classList.add('ovf-thumb--none');this.remove()">{% endif %}
+      </span>
+      <span class="ovf-tag">{{ c.domain or 'news' }}</span>
+      <span class="ovf-h">{{ c.title | sci }}</span>
+      <span class="ovf-when">{{ c.when }}{% if c.source %} · {{ c.source }}{% endif %}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if not threads %}
+  {{ empty_panel("Nothing in this window", "That can mean a quiet period — or that the feeds have stopped answering. Ask Metis to check the feeds if it looks too quiet.") }}
+{% else %}
+  {#- FOLDED, not removed. The grouping is what this tab used to be, and the
+      header of this file argues for it; it is now the second question the page
+      answers rather than the first. -#}
+  <details class="ovf-stories"{% if not feed %} open{% endif %}>
+  <summary class="u-mb-2" style="display:flex;align-items:baseline;gap:var(--m-space-3);cursor:pointer;list-style:none;">
+    <h2 class="sec-label" style="margin:0;">Running stories
+      <span class="sec-label-tail">{{ threads|length }} STOR{{ 'Y' if threads|length == 1 else 'IES' }} · {{ total_items }} REPORTS · {{ period_label|upper }}</span>
+    </h2>
+  </summary>
+
+  <div class="u-mb-6">
+    {% for t in threads %}
+      <div class="ov-thread">
+        <div>
+          <div class="ov-thread-label">
+            {{ t.label }}
+{#- LOUDNESS FOLLOWS URGENCY, which is the inversion this row needed.
+                "not yet briefed" is the DEFAULT for a thread — most threads have
+                never been in a brief — and it was rendered as solid accent, the
+                loudest treatment in the whole system, on nearly every row. The
+                page was shouting its most boring fact. It is now the quiet one,
+                and "briefed" — the informative, rarer state — carries the colour. -#}
+{#- WHAT A BADGE HAS TO EARN. Counted on the rendered page rather than
+                guessed at: "high" was on 100% of the 24 threads and "not briefed"
+                on 92%. A mark that appears on almost every row cannot distinguish
+                between rows — it is ink, not information, and it makes the two
+                marks that DO discriminate harder to see.
+
+                So the rule applied here, and it is worth keeping: a state is shown
+                only when its ABSENCE is the common case. "briefed" (4%) is worth a
+                badge; "not briefed" is the default and is now simply the lack of
+                one. "changed" (12%) stays. "high" is gone from this view entirely —
+                every multi-item thread peaks high, so it separated nothing. -#}
+            {% if t.read_leads %}<span class="stat is-good">briefed</span>{% endif %}
+            {% if t.material %}<span class="stat is-warn">&#9650; changed</span>{% endif %}
+            {% if t.routine %}<span class="stat is-quiet">routine</span>{% endif %}
+          </div>
+          {#- The three headlines under a thread are now triageable like every
+              other item on the surface. They were plain text and a link, which
+              made the overview the one tab where you could read but not act —
+              and it is the tab you land on. -#}
+          <div class="ov-thread-items">
+            {% for it in t['items'][:3] %}
+              {% set st = (states or {}).get(it.id) %}
+              <div class="ov-item{% if st and st.state %} ov-item--{{ st.state }}{% endif %}">
+                <span class="ov-item-text">
+                  {%- if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener"
+                      class="ov-link">{{ it.title | clip(130) }}</a>{% else %}{{ it.title | clip(130) }}{% endif -%}
+                  {{ tags(st) }}
+                  {%- if it._earlier %}
+                    <span class="tag">+{{ it._earlier|length }} earlier edition{{ '' if it._earlier|length == 1 else 's' }}</span>
+                  {%- endif %}
+                </span>
+                {% if it.id %}{{ actions('news', it.id, it.title, it.url, it.domain, st, T, BACK) }}{% endif %}
+              </div>
+            {% endfor %}
+            {% if t['items']|length > 3 %}
+              {#- Fetched only if opened. Rendering the rest inline meant 233
+                  items on this tab where 72 are visible, and the triage row on
+                  each — the tab weighed 669 KB for content nobody had asked to
+                  see. `toggle once` is the whole fix: HTMX fires on the
+                  <details> element's own toggle event, so the cost is paid by
+                  the reader who opens the story, not by everyone who loads the
+                  page. -#}
+              <details class="fv-fold" style="margin-top:var(--m-space-1);">
+                <summary><span class="fv-chev">▸</span>
+                  + {{ t['items']|length - 3 }} more in this story</summary>
+                <div class="fv-fold-body"
+                     hx-get="/api/partial/news/thread-items?thread={{ t.thread_id | urlencode }}&period={{ period }}&skip=3"
+                     hx-trigger="toggle once from:closest details"
+                     hx-swap="innerHTML">
+                  <span class="fb-spin">loading…</span>
+                </div>
+              </details>
+            {% endif %}
+          </div>
+        </div>
+{#- THREE STACKED GREY LINES became one. Item count, age and signal were
+            each on their own line in the same muted grey at the same size, so the
+            column read as a block of noise rather than three facts — and it took
+            three lines of vertical space per thread to say almost nothing. Now one
+            line, with only the part that can be URGENT allowed to carry colour. -#}
+        <div class="ov-thread-meta">
+          <span class="tag">{{ t['items']|length }} item{{ '' if t['items']|length == 1 else 's' }}</span>
+          <span class="tag">{% if t.age_days is not none %}{% if t.age_days < 1 %}new today{% elif t.age_days < 14 %}{{ t.age_days|int }}d{% elif t.age_days < 60 %}{{ (t.age_days / 7)|int }}w{% else %}{{ (t.age_days / 30)|int }}mo{% endif %}{% else %}new{% endif %}</span>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {#- SINGLE REPORTS. Not a lesser class of news — just news that has been
+      covered once. Presenting these as "running stories" was the actual defect:
+      the label promised continuity that the content did not have, and the
+      thread name had to be invented to keep the promise. Listed plainly, they
+      need no invented name at all — the headline speaks for itself. -#}
+  {% if singles %}
+    <h2 class="sec-label u-mb-2" style="margin-top:var(--m-space-6);">Single reports
+      <span class="sec-label-tail">{{ singles_total }} STOR{{ 'Y' if singles_total == 1 else 'IES' }} · COVERED ONCE SO FAR</span>
+    </h2>
+    <div class="u-mb-6">
+      {% for t in singles %}
+        {% for it in t['items'][:1] %}
+          {% set st = (states or {}).get(it.id) %}
+          <div class="ov-item ov-single{% if st and st.state %} ov-item--{{ st.state }}{% endif %}">
+            <span class="ov-item-text">
+              {%- if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener"
+                  class="ov-link">{{ it.title | clip(130) }}</a>{% else %}{{ it.title | clip(130) }}{% endif -%}
+              {{ tags(st) }}
+            </span>
+            {% if it.id %}{{ actions('news', it.id, it.title, it.url, it.domain, st, T, BACK) }}{% endif %}
+          </div>
+        {% endfor %}
+      {% endfor %}
+      {% if singles_total > singles|length %}
+        <p class="u-label u-mt-3">{{ singles_total - singles|length }} more single reports in this period — open a category tab to see them all.</p>
+      {% endif %}
+    </div>
+  {% endif %}
+  </details>
+{% endif %}

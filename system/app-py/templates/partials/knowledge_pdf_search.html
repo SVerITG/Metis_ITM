@@ -1,0 +1,34 @@
+<!-- knowledge_pdf_search.html — PDF chunk keyword search results -->
+{% if not results %}
+<div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-3) 0;">
+  No documents found for <strong>{{ q }}</strong>{% if domain %} in <em>{{ domain }}</em>{% endif %}.
+  Tip: ask Metis for semantic search across all content.
+</div>
+{% else %}
+<div class="u-label" style="padding:var(--m-space-2) 0 var(--m-space-3);">
+  {{ results | length }} DOCUMENT{% if results | length != 1 %}S{% endif %} MATCHING &ldquo;{{ q }}&rdquo;{% if domain %} IN {{ domain | upper }}{% endif %}
+</div>
+<div class="u-col">
+  {% for r in results %}
+  <div style="padding:var(--m-space-3) var(--m-space-4);background:var(--m-surface-2);border-radius:var(--m-radius);border-left:2px solid var(--m-accent);">
+    <div class="u-row u-row--top u-mb-2" style="justify-content:space-between;">
+      <span class="u-title" style="font-weight:500;">{{ r.title }}</span>
+      <span class="u-label u-fixed" style="white-space:nowrap;padding:var(--m-space-1) var(--m-space-2);border:1px solid var(--m-rule);border-radius:var(--m-radius-sm);">
+        {{ r.domain | upper if r.domain else 'LIBRARY' }}
+      </span>
+    </div>
+    {% if r.excerpt_html %}
+    <div class="u-mb-2" style="font-family:var(--m-display);font-size:var(--t-meta);color:var(--m-text);line-height:1.6;">
+      {{ r.excerpt_html | safe }}…
+    </div>
+    {% endif %}
+    <div class="u-label" style="display:flex;gap:var(--m-space-4);">
+      <span>{{ r.filename }}</span>
+      {% if r.page_start %}
+      <span>P. {{ r.page_start }}{% if r.page_end and r.page_end != r.page_start %}–{{ r.page_end }}{% endif %}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

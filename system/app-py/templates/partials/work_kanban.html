@@ -1,0 +1,151 @@
+{#- work_kanban.html — tasks by status, and the place a task gets a date.
+
+    Rewritten 2026-09-03. Asked for: "I like the task by status, why can it not
+    be integrated on the top of the page" — and it is now first on the surface
+    rather than folded away near the bottom, which is where I had put it a week
+    earlier as a duplicate. It is not a duplicate; it is the one panel that
+    answers "what is in flight" at a glance.
+
+    THE COLUMNS ARE THE STATES, so DRAGGING A CARD BETWEEN THEM IS THE EDIT.
+    That is the missing gesture: "put this on today" existed only as knowledge —
+    a task dated today, or starred, surfaces on the Today page — and nothing on
+    this surface said so. Of the 58 live tasks, 0 were starred and 2 were dated.
+    (An earlier note here said 92, which counted cancelled work; see
+    `db.live_task_sql`.)
+
+    Four columns from one shape, not four hand-written blocks. The previous
+    version repeated the same markup four times with small divergences, and the
+    only column that showed a due date was the second one.
+-#}
+<div class="kan-board" id="kanban-board" data-filter="{{ filter or '' }}">
+  {% for c in columns %}
+  <section class="kan-col" data-col="{{ c.key }}"
+           title="{{ c.drop }}"
+           ondragover="kanOver(event, this)"
+           ondragleave="kanLeave(this)"
+           ondrop="kanDrop(event, '{{ c.key }}')">
+    <header class="kan-head">
+      <span class="kan-name">{{ c.label }}</span>
+      {#- The count shown is the count HELD, not the count rendered. A column
+          capped at twelve that printed "12" while holding ninety would be
+          lying about the size of the pile. -#}
+      <span class="kan-n">{{ c.total }}</span>
+      {#- Held work is in this column's count but usually not in its twelve
+          visible cards — the pile is deeper than the cap. Saying so is the
+          difference between a number that is correct and a number that is
+          useful. -#}
+      {% if c.held %}
+      <span class="kan-held-n" title="{{ c.held }} of these are blocked, waiting on something else">
+        {{ c.held }} held
+      </span>
+      {% endif %}
+    </header>
+
+    <div class="kan-cards">
+      {% for t in c.tasks %}
+      {% set overdue = c.key == 'today' and t.due_date and t.due_date[:10] < today %}
+      {% set blocked = t.status == 'blocked' %}
+      <article class="kan-card{% if overdue %} kan-card--late{% endif %}{% if blocked %} kan-card--blocked{% endif %}"
+               draggable="true" data-task-id="{{ t.id }}"
+               ondragstart="kanDrag(event, '{{ t.id }}')">
+        <div class="kan-title">{{ t.title }}</div>
+        <div class="kan-meta">
+          {#- Blocked work belongs on the board, but it must not look like work
+              you could just pick up. It is the rarest state here (2 of 58) and
+              the easiest to lose, which is the whole reason it is shown. -#}
+          {% if blocked %}
+          <span class="kan-blocked" title="Blocked — waiting on something else">held</span>
+          {% endif %}
+          {#- Which project, always — the board is cross-project, and a task
+              stripped of its project is a sentence with no subject. -#}
+          {% if t.project_title %}
+          <span class="kan-proj" title="{{ t.project_title }}">{{ t.project_title }}</span>
+          {% elif t.tag %}
+          <span class="kan-proj" title="{{ t.tag }}">{{ t.tag }}</span>
+          {% endif %}
+          {% if t.due_date %}
+          <span class="kan-due{% if overdue %} kan-due--late{% endif %}"
+                title="{% if overdue %}Overdue — was due {{ t.due_date[:10] }}{% else %}Due {{ t.due_date[:10] }}{% endif %}">
+            {{ t.due_date[:10] }}{% if overdue %} ⚠{% endif %}
+          </span>
+          {% endif %}
+          <button type="button" class="kan-done" title="Mark done"
+                  onclick="kanDone('{{ t.id }}')">✓</button>
+        </div>
+      </article>
+      {% else %}
+      <p class="kan-empty">{{ c.empty }}</p>
+      {% endfor %}
+    </div>
+
+    {#- OUTSIDE the scrolling card area on purpose. It is the one line that
+        says the column is deeper than what you can see, so it must not be the
+        thing you have to scroll to find. -#}
+    {% if c.total > (c.tasks | length) %}
+    <p class="kan-more">+{{ c.total - (c.tasks | length) }} more — see the list below</p>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+
+<script>
+// Drag a card to a column and the column's meaning is applied — a date, a
+// status, or the removal of a date. One handler, because the column key is the
+// instruction and the server owns what each key means.
+(function () {
+  if (window._kanBound) return;
+  window._kanBound = true;
+
+  window.kanDrag = function (ev, taskId) {
+    ev.dataTransfer.setData('text/plain', JSON.stringify({ t: 'kantask', id: taskId }));
+    ev.dataTransfer.effectAllowed = 'move';
+  };
+  window.kanOver = function (ev, el) {
+    ev.preventDefault();
+    el.classList.add('kan-col--over');
+  };
+  window.kanLeave = function (el) { el.classList.remove('kan-col--over'); };
+
+  function _post(body) {
+    const board = document.getElementById('kanban-board');
+    body.append('filter', (board && board.dataset.filter) || '');
+    fetch('/api/partial/work/kanban/move', { method: 'POST', body: body })
+      .then(r => r.text())
+      .then(html => {
+        // The board replaces itself, and the CALENDAR is refreshed too when it
+        // is on screen: a date set here is a day in the week, and leaving the
+        // two out of step is how a surface stops being believed.
+        const zone = document.getElementById('kanban-zone');
+        if (zone) { zone.innerHTML = html; if (window.htmx) window.htmx.process(zone); }
+        const cal = document.getElementById('work-calendar');
+        if (cal && window.htmx) {
+          window.htmx.ajax('GET', '/api/partial/work/calendar?view=' +
+            ((cal.dataset.view) || 'month'), { target: '#work-calendar', swap: 'outerHTML' });
+        }
+      });
+  }
+
+  window.kanDrop = function (ev, column) {
+    ev.preventDefault();
+    const col = ev.currentTarget; if (col) col.classList.remove('kan-col--over');
+    let d; try { d = JSON.parse(ev.dataTransfer.getData('text/plain')); } catch (e) { return; }
+    if (!d || d.t !== 'kantask') return;
+    const body = new URLSearchParams();
+    body.append('task_id', d.id);
+    body.append('column', column);
+    _post(body);
+  };
+
+  window.kanDone = function (taskId) {
+    fetch('/api/task/' + encodeURIComponent(taskId) + '/done', { method: 'POST' })
+      .then(() => {
+        const board = document.getElementById('kanban-board');
+        const f = (board && board.dataset.filter) || '';
+        if (window.htmx) {
+          window.htmx.ajax('GET', '/api/partial/work/kanban?filter=' + encodeURIComponent(f),
+            { target: '#kanban-zone', swap: 'innerHTML' });
+        }
+      });
+  };
+})();
+</script>

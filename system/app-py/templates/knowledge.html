@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+{% from "partials/_section.html" import sec_label %}
+{% block title %}Library{% endblock %}
+
+{#
+  ══════════════════════════════════════════════════════════════════════════════
+  THE LIBRARY SURFACE — five tabs, not one long scroll.
+
+  This page used to stack NINE full-width sections vertically: search, semantic
+  search, slipcases, index cards, background layers, the Zotero browser, the
+  knowledge corpus, PDF full-text search, topic coverage and the coverage-gap
+  detector. Two things were wrong with that, and they compounded:
+
+    · IT COULD NOT BE READ. The researcher's words: "at the bottom there were several very
+      long sessions… not long lists of documents or items". A reference surface is
+      consulted with a purpose — you arrive wanting to review what is new, OR to
+      find something you own, OR to check where your coverage is thin. Stacking
+      all three means every visit scrolls past the other two.
+
+    · EVERY SECTION FETCHED ON ARRIVAL. Nine hx-trigger="load" blocks, several of
+      them heavy, all firing before the first one had rendered.
+
+  So the sections are grouped by the QUESTION they answer, and only the open tab
+  fetches. The grouping is deliberate:
+
+    New        — what appeared since I last looked        (the thing with a deadline)
+    Catalogue  — what do I already have                   (search + browse)
+    Shelf      — the books, as objects                    (clickable, openable)
+    Corpus     — what is indexed and searchable full-text (backgrounds, PDFs)
+    Landscape  — where am I thin                          (coverage, gaps)
+
+  Deferral uses a custom `loadtab` event rather than hx-trigger="load", because
+  "load" fires for hidden elements too — tabs would have hidden the scrollbar
+  while keeping all nine requests.
+  ══════════════════════════════════════════════════════════════════════════════
+#}
+
+{% block content %}
+<div class="page">
+
+  <!-- ===== PageHead ===== -->
+  <div class="page-head">
+    <div>
+      <div class="page-eyebrow">SURFACE 02</div>
+      <h1 class="page-title">Library</h1>
+    </div>
+    <div class="page-meta" id="knowledge-head-meta">
+      <div hx-get="/api/partial/knowledge/stats-meta"
+           hx-trigger="load"
+           hx-swap="innerHTML">— CARDS · — SLIPCASES</div>
+    </div>
+  </div>
+
+  {#- ═══ THE READING STACK, ABOVE THE TABS ═══════════════════════════════════
+      Asked for 2026-09-15: "give the Reading Stack its own prominent place on
+      top in the Library Surface."
+
+      This is not a reversal of the 2026-08-29 decision that removed it as a
+      top-level surface — it is the same rule applied to changed facts. The
+      complaint then was that the Stack ranked alongside a 3,000-item library
+      while holding ZERO; reading is a STATE of a paper, not a place, and an
+      empty place does not deserve a surface. The pile is real now, so the state
+      deserves to be visible without hunting for a tab.
+
+      It stays a band rather than becoming a surface again: it sits above the
+      tabs because it is what you are in the middle of, and the tabs below it are
+      what you own. It renders nothing at all when the pile is empty, which is
+      what stops this becoming the empty panel it was removed for being.
+
+      `bare=1` because the band supplies its own heading — the same partial
+      printing its own title inside a titled container is the defect corrected
+      twice on Today this week. ═══════════════════════════════════════════════ -#}
+  <div class="lib-reading" id="lib-reading-band">
+    <div class="lib-reading-h">
+      <span class="lib-reading-t">Your reading stack</span>
+      <button type="button" class="lib-reading-all" onclick="libTab('reading')">
+        open the stack &rarr;</button>
+    </div>
+    <div hx-get="/api/partial/today/reading?bare=1&on_library=1"
+         hx-trigger="load"
+         hx-swap="innerHTML"></div>
+  </div>
+
+  <!-- ===== Tab strip ===== -->
+  <div class="news-tabs u-mb-5" role="tablist" aria-label="Library sections">
+      <button class="news-tab" role="tab" type="button" data-libtab="new"
+              aria-selected="true"
+              title="What has appeared since you last looked"
+              onclick="libTab('new')">New</button>
+      {#- FOCUS. A tab for the one subject a researcher's library is built around.
+          Only present when that subject is configured on this machine; a fresh
+          install has no such tab. -#}
+      {% set focus = library_focus() if library_focus is defined else none %}
+      {% if focus %}
+      <button class="news-tab" role="tab" type="button" data-libtab="{{ focus.tab }}"
+              aria-selected="false"
+              title="{{ focus.tooltip }}"
+              onclick="libTab('{{ focus.tab }}')">{{ focus.label }}</button>
+      {% endif %}
+      {#- READING. The Stack used to be a top-level surface holding ZERO items,
+          ranked alongside a 3,083-item Library. The researcher, 2026-08-29: "The reading
+          stack needs to live somewhere else, not as one of the surfaces but it
+          needs to exist yes." Reading is a state of a paper, not a place. -#}
+      <button class="news-tab" role="tab" type="button" data-libtab="reading"
+              aria-selected="false"
+              title="What you filed to read, and what you flagged as crucial"
+              onclick="libTab('reading')">Reading</button>
+      <button class="news-tab" role="tab" type="button" data-libtab="catalogue"
+              aria-selected="false"
+              title="Search and browse everything you already hold"
+              onclick="libTab('catalogue')">Catalogue</button>
+      <button class="news-tab" role="tab" type="button" data-libtab="shelf"
+              aria-selected="false"
+              title="Books and reports held locally, as objects"
+              onclick="libTab('shelf')">Shelf</button>
+      {#- CATEGORIES, not "shelves" — the tab above already means a shelf of
+          physical objects, and two things called shelf on one surface is worse
+          than a slightly longer word. The internal name is `library_shelves`;
+          the word the reader sees is "category", which is the word that was
+          asked for. -#}
+      <button class="news-tab" role="tab" type="button" data-libtab="categories"
+              aria-selected="false"
+              title="Why you kept something: kept for its method, a subject you follow, or evidence for a project"
+              onclick="libTab('categories')">Categories</button>
+      <button class="news-tab" role="tab" type="button" data-libtab="corpus"
+              aria-selected="false"
+              title="Indexed full text and specialist background layers"
+              onclick="libTab('corpus')">Corpus</button>
+      <button class="news-tab" role="tab" type="button" data-libtab="landscape"
+              aria-selected="false"
+              title="Where your coverage is strong, thin, or absent"
+              onclick="libTab('landscape')">Landscape</button>
+  </div>
+
+  <!-- ── panel: new ──────────────────────────────────────────────────── -->
+  <div class="lib-panel" id="libpanel-new" role="tabpanel"
+       >
+    {#- innerHTML, not outerHTML: this element carries the layout/styling classes and the partial returns bare content, so an outerHTML swap deleted the wrapper and the panel silently lost its border, padding or grid on load. See tools/check_htmx_swaps.py. -#}
+    <div class="u-mb-2"
+         hx-get="/api/partial/library/new-literature"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div class="panel skeleton skeleton-box" style="height:300px;"></div>
+    </div>
+  </div>
+
+  <!-- ── panel: categories ───────────────────────────────────────────── -->
+  <div class="lib-panel" id="libpanel-categories" role="tabpanel" hidden>
+    <div hx-get="/api/partial/library/shelves"
+         hx-trigger="loadtab"
+         hx-swap="innerHTML">
+      <div class="panel skeleton skeleton-box" style="height:240px;"></div>
+    </div>
+  </div>
+
+  <!-- ── panel: focus subject (only when configured) ─────────────────── -->
+  {% if focus %}
+  <div class="lib-panel" id="libpanel-{{ focus.tab }}" role="tabpanel" hidden>
+    <div hx-get="/api/partial/library/focus"
+         hx-trigger="loadtab"
+         hx-swap="outerHTML">
+      <div class="panel skeleton skeleton-box" style="height:300px;"></div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── panel: catalogue ──────────────────────────────────────────────────── -->
+  <div class="lib-panel" id="libpanel-reading" role="tabpanel" hidden>
+    {#- `loadtab` rather than `load`: the panel is fetched when the tab is
+        first opened, not on every visit to Library. -#}
+    <div hx-get="/api/partial/stack/body"
+         hx-trigger="loadtab"
+         hx-swap="innerHTML">
+      <div class="panel panel-pad skeleton" style="min-height:160px;"></div>
+    </div>
+  </div>
+
+  <div class="lib-panel" id="libpanel-catalogue" role="tabpanel"
+       hidden>
+  <!-- ===== Unified Search (catalogue — what you already hold) ===== -->
+  <div class="u-mb-6">
+    {{ sec_label("Search", tail="PAPERS · DOMAIN CORPUS · CARDS · MEMORY") }}
+    <div class="panel panel--md">
+      <input class="u-tile" type="search"
+             id="unified-search-input"
+             placeholder="Search across all of your library and memory…"
+             style="width:100%;font-family:var(--m-ui);font-size:var(--t-body);padding:var(--m-space-3) var(--m-space-4);color:var(--m-ink);"
+             hx-get="/api/partial/knowledge/unified-search"
+             hx-trigger="keyup changed delay:400ms"
+             hx-target="#unified-search-results"
+             hx-include="[id='unified-search-input']"
+             name="q"
+             autocomplete="off"
+             autofocus
+             onkeyup="if(window.htmx){var sem=document.getElementById('unified-search-semantic-trigger');if(sem)htmx.trigger(sem,'refresh');}" aria-label="Search across all of your library and memory">
+      <div id="unified-search-results" style="margin-top:var(--m-space-2);min-height:40px;">
+        <div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-2) 0 var(--m-space-2);">Find papers, notes, and what you've read — all at once.</div>
+        {# Ghost-button quick queries — gives the empty search a place to start #}
+        <div style="display:flex;flex-wrap:wrap;gap:var(--m-space-2);margin-top:var(--m-space-2);">
+          {% set quick_queries = [
+            ('Research domain', 'Research domain'),
+            ('Recent papers', 'recent'),
+            ('My unread', 'unread'),
+            ('Multilevel models', 'multilevel'),
+            ('Surveillance methods', 'surveillance')
+          ] + (library_search_chips() if library_search_chips is defined else []) %}
+          {% for label, q in quick_queries %}
+          <button class="u-label" type="button"
+                  onclick="(function(){var el=document.getElementById('unified-search-input');if(!el)return;el.value='{{ q }}';el.dispatchEvent(new Event('keyup'));el.focus();})()"
+                  style="background:var(--m-surface-2);border:1px solid var(--m-rule-soft);border-radius:14px;padding:var(--m-space-1) var(--m-space-3);letter-spacing:0.06em;cursor:pointer;transition:all 120ms;"
+                  onmouseover="this.style.color='var(--m-ink)';this.style.borderColor='var(--m-accent)';this.style.background='var(--m-surface)';"
+                  onmouseout="this.style.color='var(--m-muted)';this.style.borderColor='var(--m-rule-soft)';this.style.background='var(--m-surface-2)';">
+            {{ label }}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Semantic / deep-search companion -->
+      <div class="u-rule-t" style="margin-top:var(--m-space-4);padding-top:14px;">
+        {{ sec_label("Semantic matches", tail="MEANING · NOT JUST KEYWORDS") }}
+        <div id="unified-search-semantic-trigger"
+             hx-get="/api/partial/knowledge/unified-search-semantic"
+             hx-trigger="refresh delay:600ms from:#unified-search-input"
+             hx-include="[id='unified-search-input']"
+             hx-swap="innerHTML"
+             hx-target="this">
+          <div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-2) 0;">Type above — semantic matches will surface alongside the keyword results.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Zotero Library browser ===== -->
+  <div style="margin-top:var(--m-space-6);">
+    <!-- Sync status bar -->
+    <div id="lib-sync-bar"
+         hx-get="/api/partial/knowledge/sync-status"
+         hx-trigger="loadtab"
+         hx-swap="outerHTML">
+      <div class="skeleton u-mb-3" style="height:36px;border-radius:var(--m-radius);"></div>
+    </div>
+
+    <!-- Recently added strip -->
+    <div hx-get="/api/partial/knowledge/recently-added"
+         hx-trigger="loadtab"
+         hx-swap="outerHTML"></div>
+
+    <!-- Browser panel -->
+    <div hx-get="/api/partial/knowledge/library-browser"
+         hx-trigger="loadtab"
+         hx-swap="outerHTML">
+      <div>
+        {{ sec_label("Zotero Library") }}
+        <div class="panel skeleton skeleton-box" style="height:200px;"></div>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <!-- ── panel: shelf ──────────────────────────────────────────────────── -->
+  <div class="lib-panel" id="libpanel-shelf" role="tabpanel"
+       hidden>
+  <!-- ===== Slipcases sidebar + Index cards main ===== -->
+  <div class="k-layout">
+
+    <!-- Slipcases list -->
+    <div hx-get="/api/partial/knowledge/slipcases"
+         hx-trigger="loadtab"
+         hx-swap="outerHTML">
+      <div>
+        <h2 class="sec-label u-mb-2">Slipcases</h2>
+        <div class="panel list-scroll skeleton" style="min-height:180px;"></div>
+      </div>
+    </div>
+
+    <!-- Index cards main area -->
+    <div id="knowledge-cards-area"
+         hx-get="/api/partial/knowledge/cards"
+         hx-trigger="loadtab"
+         hx-swap="outerHTML">
+      <div>
+        <h2 class="sec-label u-mb-2">Index cards</h2>
+        <div class="panel skeleton skeleton-box" style="height:320px;"></div>
+      </div>
+    </div>
+
+  </div>
+  </div>
+
+  <!-- ── panel: corpus ──────────────────────────────────────────────────── -->
+  <div class="lib-panel" id="libpanel-corpus" role="tabpanel"
+       hidden>
+  <!-- ===== What Metis can quote — the honest denominator ===== -->
+  <div hx-get="/api/partial/knowledge/quotable"
+       hx-trigger="loadtab"
+       hx-swap="outerHTML"></div>
+
+  <!-- ===== Knowledge backgrounds (P4) ===== -->
+  <div style="margin-top:var(--m-space-6);"
+       hx-get="/api/partial/knowledge/layers"
+       hx-trigger="loadtab"
+       hx-swap="outerHTML">
+    <div class="skeleton" style="height:120px;border-radius:var(--m-radius);"></div>
+  </div>
+
+  <!-- ===== Knowledge Corpus ===== -->
+  <div style="margin-top:var(--m-space-6);">
+    <div hx-get="/api/partial/knowledge/seeded-corpus"
+         hx-trigger="loadtab"
+         hx-swap="outerHTML">
+      <div>
+        {{ sec_label("Knowledge Corpus") }}
+        <div class="panel skeleton skeleton-box" style="height:200px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PDF Fulltext Search ===== -->
+  <div style="margin-top:var(--m-space-6);">
+    {{ sec_label("PDF Fulltext Search", tail="KEYWORD · INDEXED DOCUMENTS") }}
+    <!-- Index status + build control (so the search box is never a dead end) -->
+    <div class="panel u-mb-3 panel--md"
+         hx-get="/api/partial/knowledge/pdf-stats"
+         hx-trigger="loadtab"
+         hx-swap="innerHTML">
+      <div class="u-ed" style="font-size:var(--t-small);">Checking your PDF index…</div>
+    </div>
+    <div class="panel panel--md">
+      <input class="u-tile" type="search"
+             id="pdf-search-input"
+             placeholder="Search across all indexed PDFs…"
+             style="width:100%;font-family:var(--m-ui);font-size:var(--t-body);padding:var(--m-space-3) var(--m-space-4);color:var(--m-ink);"
+             hx-get="/api/partial/knowledge/pdf-search"
+             hx-trigger="keyup changed delay:400ms"
+             hx-target="#pdf-search-results"
+             hx-include="[id='pdf-search-input']"
+             name="q"
+             autocomplete="off" aria-label="Search across all indexed PDFs">
+      <div id="pdf-search-results" style="margin-top:var(--m-space-2);min-height:40px;">
+        <div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-3) 0;">Type to search indexed PDF content by keyword.</div>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <!-- ── panel: landscape ──────────────────────────────────────────────────── -->
+  <div class="lib-panel" id="libpanel-landscape" role="tabpanel"
+       hidden>
+  <!-- ===== Research Landscape: Topic Coverage Map ===== -->
+  <div style="margin-top:var(--m-space-6);">
+    {{ sec_label("Research Landscape", tail="TOPIC COVERAGE · GOOD · PARTIAL · GAP") }}
+    <div hx-get="/api/partial/knowledge/topic-coverage"
+         hx-trigger="loadtab"
+         hx-swap="outerHTML">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--m-space-3);">
+        {% for _ in range(6) %}
+        <div class="panel skeleton skeleton-box" style="height:96px;"></div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Coverage Gap Detector — OpenAlex (collapsed) ===== -->
+  <div style="margin-top:var(--m-space-6);">
+    <details>
+      <summary class="u-row" style="list-style:none;cursor:pointer;margin-bottom:0;user-select:none;">
+        {{ sec_label("Coverage Gap Detector", tail="ZOTERO VS. OPENALEX · CLICK TO EXPAND", style="margin-bottom:0;pointer-events:none;") }}
+        <svg class="u-fixed" id="gap-chevron" viewBox="0 0 16 16" width="10" height="10" fill="none"
+             stroke="var(--m-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+             style="margin-left:auto;transition:transform 200ms;">
+          <polyline points="4 6 8 10 12 6"/>
+        </svg>
+      </summary>
+      <div style="margin-top:var(--m-space-3);"
+           hx-get="/api/partial/knowledge/coverage-gap"
+           hx-trigger="intersect once"
+           hx-swap="outerHTML">
+        <div>
+          <div class="panel skeleton skeleton-box" style="height:120px;"></div>
+        </div>
+      </div>
+    </details>
+  </div>
+  </div>
+
+</div><!-- /.page -->
+
+<script>
+// Tab switching + first-open lazy load.
+//
+// The deferral is the point: each panel's htmx blocks listen for `loadtab`
+// instead of `load`, so their requests are made the first time the panel is
+// actually opened and never again.
+function libTab(key) {
+  document.querySelectorAll('.lib-panel').forEach(function (p) {
+    p.hidden = (p.id !== 'libpanel-' + key);
+  });
+  document.querySelectorAll('[data-libtab]').forEach(function (b) {
+    b.setAttribute('aria-selected', b.dataset.libtab === key ? 'true' : 'false');
+  });
+
+  var panel = document.getElementById('libpanel-' + key);
+  if (!panel || panel.dataset.loaded === '1') return;
+  panel.dataset.loaded = '1';
+  // Fire the deferred fetches for everything inside this panel exactly once.
+  panel.querySelectorAll('[hx-trigger~="loadtab"]').forEach(function (el) {
+    htmx.trigger(el, 'loadtab');
+  });
+  // Remember the tab so a reload comes back where the researcher was, rather than
+  // resetting to New every time and re-fetching a list he just reviewed.
+  try { localStorage.setItem('metis.libtab', key); } catch (e) {}
+}
+
+// The New panel loads on arrival (hx-trigger="load"), so mark it done.
+(function () {
+  var np = document.getElementById('libpanel-new');
+  if (np) np.dataset.loaded = '1';
+  // AN EXPLICIT LINK BEATS THE REMEMBERED TAB. A link from another surface
+  // arrives with #libpanel-<key> or ?libtab=<key>, and neither did anything
+  // before: the panels are `hidden`, so a bare fragment scrolls the browser to
+  // an invisible element and the page looks unchanged. The reader then reports,
+  // correctly, that the section does not exist. Accept both forms — the hash so
+  // a link can be pasted, the query so it survives a redirect.
+  var want = null;
+  var m = (location.hash || '').match(/^#(?:libpanel-)?([a-z]+)$/);
+  if (m && document.getElementById('libpanel-' + m[1])) want = m[1];
+  if (!want) {
+    var q = new URLSearchParams(location.search).get('libtab');
+    if (q && document.getElementById('libpanel-' + q)) want = q;
+  }
+  if (!want) {
+    try {
+      var saved = localStorage.getItem('metis.libtab');
+      if (saved && saved !== 'new' && document.getElementById('libpanel-' + saved)) {
+        want = saved;
+      }
+    } catch (e) {}
+  }
+  if (want) libTab(want);
+})();
+
+// A hash change while already on the page must switch too, or a second click
+// on the same link from a surface that is already open does nothing.
+window.addEventListener('hashchange', function () {
+  var m = (location.hash || '').match(/^#(?:libpanel-)?([a-z]+)$/);
+  if (m && document.getElementById('libpanel-' + m[1])) libTab(m[1]);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,515 @@
+{# Personal Knowledge Graph — D3.js force-directed visualization.
+   Shows connections between papers, ideas, projects, meetings, concepts, news, journal.
+   Context vars: projects (list of {project_id, title}). #}
+
+{# Node types map onto the shared categorical chart ramp (--m-chart-1..8 in
+   styles.css). Slot 8 is the neutral fallback, which is why 'task' takes it.
+   The legend below uses var() directly; the D3 script cannot (d3.color() needs a
+   resolved value), so it reads the same tokens via getComputedStyle. #}
+{% set type_meta = {
+  'paper':   {'color': 'var(--m-chart-1)', 'label': 'Papers',   'icon': '📄'},
+  'idea':    {'color': 'var(--m-chart-3)', 'label': 'Ideas',    'icon': '💡'},
+  'project': {'color': 'var(--m-chart-2)', 'label': 'Projects', 'icon': '◆'},
+  'meeting': {'color': 'var(--m-chart-5)', 'label': 'Meetings', 'icon': '👥'},
+  'concept': {'color': 'var(--m-chart-7)', 'label': 'Concepts', 'icon': '◎'},
+  'news':    {'color': 'var(--m-chart-4)', 'label': 'News',     'icon': '📡'},
+  'journal': {'color': 'var(--m-chart-6)', 'label': 'Journal',  'icon': '✎'},
+  'task':    {'color': 'var(--m-chart-8)', 'label': 'Tasks',     'icon': '☐'}
+} %}
+
+<div class="u-mb-6" id="kg-surface">
+
+  <!-- ── Section header ── -->
+  <h2 class="sec-label u-mb-3">
+    <span>Personal Knowledge Graph</span>
+    <span class="tail" id="kg-stats-tail">LOADING</span>
+  </h2>
+
+  <div class="panel panel--clip">
+
+    <!-- ── Controls bar ── -->
+    <div class="u-row u-row--wrap u-rule" style="padding:var(--m-space-3) var(--m-space-4);background:var(--m-surface-2);">
+
+      <!-- Entity type toggles -->
+      <div style="display:flex;flex-wrap:wrap;gap:var(--m-space-1);">
+        {% for tkey, tm in type_meta.items() %}
+        {# NB: these were `{{ tm.color }}22` / `...0d` — hex-alpha suffixes. That only
+           works when tm.color is a literal hex; now that it is a var() token the
+           suffix would be invalid CSS, so the tints go through color-mix. #}
+        <label class="kg-type-toggle" style="display:flex;align-items:center;gap:3px;cursor:pointer;
+                      padding:3px 9px;border-radius:100px;font-family:var(--m-mono);font-size:11px;
+                      letter-spacing:0.08em;border:1px solid color-mix(in srgb, {{ tm.color }} 13%, transparent);
+                      background:color-mix(in srgb, {{ tm.color }} 5%, transparent);color:{{ tm.color }};transition:all 120ms;user-select:none;">
+          <input type="checkbox" class="kg-type-cb u-hide" value="{{ tkey }}" checked onchange="kgReload()">
+          <span style="width:7px;height:7px;border-radius:50%;background:{{ tm.color }};display:inline-block;flex-shrink:0;"></span>
+          {{ tm.label | upper }}
+          <span class="kg-type-count" data-type="{{ tkey }}" style="opacity:.6;">0</span>
+        </label>
+        {% endfor %}
+      </div>
+
+      <div class="u-grow"></div>
+
+      <!-- Time range selector -->
+      <div style="display:flex;border:1px solid var(--m-rule);border-radius:var(--m-radius);overflow:hidden;">
+        {% for val, lbl in [('week','1W'), ('month','1M'), ('quarter','3M'), ('year','1Y'), ('','ALL')] %}
+        <button class="kg-time-btn" data-range="{{ val }}"
+                style="padding:3px 9px;font-family:var(--m-mono);font-size:11px;letter-spacing:0.08em;
+                       border:none;{% if not val %}border-left:none;{% else %}border-left:1px solid var(--m-rule);{% endif %}
+                       cursor:pointer;background:{% if not val %}var(--m-accent){% else %}transparent{% endif %};
+                       color:{% if not val %}#fff{% else %}var(--m-muted){% endif %};transition:all 100ms;"
+                onclick="kgSetTime(this)">{{ lbl }}</button>
+        {% endfor %}
+      </div>
+
+      <!-- Focus selector -->
+      <select class="u-mono" id="kg-focus" style="padding:var(--m-space-1) var(--m-space-2);border:1px solid var(--m-rule);border-radius:var(--m-radius);background:var(--m-surface);color:var(--m-ink);cursor:pointer;"
+              onchange="kgReload()">
+        <option value="">All contexts</option>
+        {% for p in projects %}
+        <option value="project:{{ p.project_id }}">{{ p.title or p.project_id }}</option>
+        {% endfor %}
+      </select>
+
+      <!-- Search -->
+      <input class="u-mono" type="search" id="kg-search" placeholder="Filter…"
+             style="width:120px;padding:var(--m-space-1) var(--m-space-2);border:1px solid var(--m-rule);border-radius:var(--m-radius);background:var(--m-surface);color:var(--m-ink);"
+             oninput="kgFilter(this.value)" aria-label="Filter">
+    </div>
+
+    <!-- ── Graph container ── -->
+    <div id="kg-container" style="position:relative;width:100%;height:560px;background:var(--m-surface);overflow:hidden;">
+      <svg id="kg-svg" width="100%" height="100%"></svg>
+
+      <!-- Detail panel (slides in from right) -->
+      <div class="u-hide" id="kg-detail" style="position:absolute;top:0;right:0;bottom:0;width:280px;background:var(--m-surface);border-left:1px solid var(--m-rule-soft);padding:var(--m-space-4);overflow-y:auto;z-index:10;box-shadow:-4px 0 16px rgba(0,0,0,.06);transition:transform 200ms;">
+        <button class="btn btn--ghost" style="position:absolute;top:8px;right:8px;font-size:var(--t-h4);color:var(--m-muted);line-height:1;" onclick="kgCloseDetail()">✕</button>
+        <div id="kg-detail-body"></div>
+      </div>
+
+      <!-- Legend -->
+      <div id="kg-legend" style="position:absolute;bottom:10px;left:12px;display:flex;flex-wrap:wrap;gap:var(--m-space-2);padding:var(--m-space-2) var(--m-space-3);background:var(--m-surface-2);border-radius:var(--m-radius);border:1px solid var(--m-rule-soft);opacity:.9;"></div>
+
+      <!-- Loading overlay -->
+      <div class="u-row" id="kg-loading" style="position:absolute;inset:0;justify-content:center;background:var(--m-surface);z-index:20;">
+        <div style="text-align:center;">
+          <div class="u-label u-mb-2">BUILDING GRAPH</div>
+          <div class="skeleton skeleton-bar" style="width:120px;height:3px;margin:0 auto;"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- D3 v7 -->
+<script src="/static/vendor/d3.min.js"></script>
+{% raw %}
+<script>
+(function() {
+  /* ── Config ─────────────────────────────────────────────── */
+  /* Colours come from the shared categorical ramp in styles.css, not from
+     hardcoded hex — so the graph tracks the active theme. d3.color() needs a
+     resolved value (it calls .darker() on the stroke), so we cannot hand it a
+     `var(...)` string; we resolve the tokens off the root element instead. */
+  const TYPE_SLOT = {
+    paper: 1, project: 2, idea: 3, news: 4,
+    meeting: 5, journal: 6, concept: 7, task: 8
+  };
+  let TYPE_COLORS = {};
+
+  function readChartRamp() {
+    const cs = getComputedStyle(document.documentElement);
+    const next = {};
+    for (const [type, slot] of Object.entries(TYPE_SLOT)) {
+      const v = cs.getPropertyValue('--m-chart-' + slot).trim();
+      next[type] = v || '#666c63';   /* fallback = neutral slot */
+    }
+    TYPE_COLORS = next;
+    return TYPE_COLORS;
+  }
+  readChartRamp();
+  const TYPE_LABELS = {
+    paper:'Paper', idea:'Idea', project:'Project', meeting:'Meeting',
+    concept:'Concept', news:'News', journal:'Journal', task:'Task'
+  };
+  const BASE_R = 6;
+  const PROJECT_R = 14;
+
+  let currentTimeRange = '';
+  let allNodes = [], allEdges = [];
+  let simulation, gRoot, nodeElements, linkElements;
+  let highlightedId = null;
+
+  /* ── Controls ───────────────────────────────────────────── */
+  window.kgSetTime = function(btn) {
+    document.querySelectorAll('.kg-time-btn').forEach(b => {
+      b.style.background = 'transparent';
+      b.style.color = 'var(--m-muted)';
+    });
+    btn.style.background = 'var(--m-accent)';
+    btn.style.color = '#fff';
+    currentTimeRange = btn.dataset.range;
+    kgReload();
+  };
+
+  window.kgReload = function() {
+    const types = [...document.querySelectorAll('.kg-type-cb:checked')].map(c => c.value).join(',');
+    const focus = document.getElementById('kg-focus').value;
+    const url = `/api/knowledge/graph-data?types=${types}&time_range=${currentTimeRange}&focus=${encodeURIComponent(focus)}`;
+    document.getElementById('kg-loading').style.display = 'flex';
+    fetch(url).then(r => r.json()).then(data => {
+      allNodes = data.nodes;
+      allEdges = data.edges;
+      updateStats(data.stats);
+      renderGraph(allNodes, allEdges);
+      document.getElementById('kg-loading').style.display = 'none';
+    }).catch(e => {
+      /* Log AND render. A catch that only writes to the DOM makes its own
+         defect invisible: the console stayed clean on all nine surfaces while
+         this panel failed on every single load, which is how the d3 race
+         below survived unnoticed for weeks. */
+      console.error('kg: graph reload failed', e);
+      document.getElementById('kg-loading').innerHTML =
+        '<div class="u-mono" style="color:var(--m-alert);">Error loading graph</div>';
+    });
+  };
+
+  window.kgFilter = function(query) {
+    if (!query) {
+      nodeElements.attr('opacity', 1);
+      linkElements.attr('opacity', 0.35);
+      return;
+    }
+    const q = query.toLowerCase();
+    const matchIds = new Set();
+    allNodes.forEach(n => {
+      if ((n.title || '').toLowerCase().includes(q) ||
+          (n.tags || []).some(t => t.toLowerCase().includes(q)) ||
+          (n.type || '').includes(q) ||
+          (n.domain || '').toLowerCase().includes(q))
+        matchIds.add(n.id);
+    });
+    nodeElements.attr('opacity', d => matchIds.has(d.id) ? 1 : 0.08);
+    linkElements.attr('opacity', d =>
+      matchIds.has(d.source.id || d.source) && matchIds.has(d.target.id || d.target) ? 0.5 : 0.03);
+  };
+
+  window.kgCloseDetail = function() {
+    document.getElementById('kg-detail').style.display = 'none';
+    highlightedId = null;
+    if (nodeElements) {
+      nodeElements.attr('opacity', 1);
+      linkElements.attr('opacity', 0.35);
+    }
+  };
+
+  /* ── Stats ──────────────────────────────────────────────── */
+  function updateStats(stats) {
+    const tail = document.getElementById('kg-stats-tail');
+    tail.textContent = `${stats.node_count} NODES · ${stats.edge_count} EDGES`;
+    const tc = stats.types || {};
+    document.querySelectorAll('.kg-type-count').forEach(el => {
+      el.textContent = tc[el.dataset.type] || 0;
+    });
+    // Update toggle styling
+    document.querySelectorAll('.kg-type-toggle').forEach(lbl => {
+      const cb = lbl.querySelector('input');
+      if (cb && !cb.checked) {
+        lbl.style.opacity = '0.35';
+      } else {
+        lbl.style.opacity = '1';
+      }
+    });
+  }
+
+  /* ── Legend ─────────────────────────────────────────────── */
+  function buildLegend(types) {
+    const el = document.getElementById('kg-legend');
+    el.innerHTML = '';
+    for (const t of Object.keys(types)) {
+      const c = TYPE_COLORS[t] || '#666c63';
+      el.innerHTML += `<div class="u-row" style="gap:var(--m-space-1);">
+        <span style="width:8px;height:8px;border-radius:50%;background:${c};display:inline-block;"></span>
+        <span class="u-label" style="letter-spacing:0.08em;">${(TYPE_LABELS[t]||t).toUpperCase()} ${types[t]}</span>
+      </div>`;
+    }
+  }
+
+  /* ── Render ─────────────────────────────────────────────── */
+  function renderGraph(nodes, edges) {
+    const container = document.getElementById('kg-container');
+    const W = container.clientWidth || 900;
+    const H = container.clientHeight || 560;
+
+    const svg = d3.select('#kg-svg');
+    svg.selectAll('*').remove();
+
+    if (!nodes.length) {
+      svg.append('text')
+        .attr('x', W/2).attr('y', H/2)
+        .attr('text-anchor', 'middle')
+        .attr('fill', 'var(--m-muted)')
+        .attr('font-family', 'var(--m-display)')
+        .attr('font-size', '15px')
+        .text('No nodes to display — adjust filters or time range.');
+      return;
+    }
+
+    // Compute connectivity for sizing
+    const degree = {};
+    edges.forEach(e => {
+      degree[e.source] = (degree[e.source] || 0) + 1;
+      degree[e.target] = (degree[e.target] || 0) + 1;
+    });
+
+    // Node radius function
+    const nodeR = d => {
+      if (d.type === 'project') return PROJECT_R;
+      const deg = degree[d.id] || 0;
+      return Math.max(BASE_R, Math.min(18, BASE_R + Math.sqrt(deg) * 2.5));
+    };
+
+    // Zoom
+    const zoom = d3.zoom().scaleExtent([0.15, 5])
+      .on('zoom', e => gRoot.attr('transform', e.transform));
+    svg.call(zoom);
+
+    gRoot = svg.append('g');
+
+    // Clone data
+    const simNodes = nodes.map(d => ({...d}));
+    const simEdges = edges.map(d => ({source: d.source, target: d.target, label: d.label}));
+
+    // Build ID set for edge validation
+    const idSet = new Set(simNodes.map(n => n.id));
+    const validEdges = simEdges.filter(e => idSet.has(e.source) && idSet.has(e.target));
+
+    // Force simulation
+    if (simulation) simulation.stop();
+    simulation = d3.forceSimulation(simNodes)
+      .force('link', d3.forceLink(validEdges).id(d => d.id).distance(d => {
+        // Shorter links for project-task/idea, longer for tag-based
+        if (d.label === 'shared-tag') return 130;
+        if (d.label === 'belongs-to' || d.label === 'task-of') return 60;
+        return 90;
+      }).strength(d => d.label === 'shared-tag' ? 0.15 : 0.4))
+      .force('charge', d3.forceManyBody().strength(d =>
+        d.type === 'project' ? -350 : -120))
+      .force('center', d3.forceCenter(W / 2, H / 2))
+      .force('collision', d3.forceCollide().radius(d => nodeR(d) + 4))
+      .force('x', d3.forceX(W / 2).strength(0.03))
+      .force('y', d3.forceY(H / 2).strength(0.03));
+
+    // ── Draw edges ──
+    linkElements = gRoot.append('g')
+      .selectAll('line').data(validEdges).join('line')
+      .attr('stroke', d => {
+        if (d.label === 'belongs-to' || d.label === 'task-of') return 'var(--m-rule)';
+        if (d.label === 'shared-tag') return 'var(--m-accent)';
+        return 'var(--m-rule-soft)';
+      })
+      .attr('stroke-width', d => d.label === 'shared-tag' ? 0.8 : 1.2)
+      .attr('stroke-opacity', 0.35)
+      .attr('stroke-dasharray', d => d.label === 'shared-tag' ? '3,3' : 'none');
+
+    // ── Draw nodes ──
+    const nodeGroup = gRoot.append('g')
+      .selectAll('g').data(simNodes).join('g')
+      .style('cursor', 'pointer')
+      .call(d3.drag()
+        .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+        .on('drag',  (e, d) => { d.fx=e.x; d.fy=e.y; })
+        .on('end',   (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; })
+      )
+      .on('click', (e, d) => showDetail(d, edges))
+      .on('mouseenter', (e, d) => highlightNode(d))
+      .on('mouseleave', () => { if (!highlightedId) unhighlight(); });
+
+    // Circle
+    nodeGroup.append('circle')
+      .attr('r', d => nodeR(d))
+      .attr('fill', d => TYPE_COLORS[d.type] || '#666c63')
+      .attr('fill-opacity', d => d.type === 'project' ? 0.92 : 0.78)
+      .attr('stroke', d => d3.color(TYPE_COLORS[d.type] || '#666c63').darker(0.4))
+      .attr('stroke-width', d => d.type === 'project' ? 2 : 1.2);
+
+    // Project label (inside circle)
+    nodeGroup.filter(d => d.type === 'project')
+      .append('text')
+      .text('◆')
+      .attr('text-anchor', 'middle').attr('dy', '0.35em')
+      .attr('fill', '#fff').attr('font-size', '9px')
+      .style('pointer-events', 'none');
+
+    // Labels (below node)
+    nodeGroup.append('text')
+      .text(d => {
+        const t = d.title || '';
+        return t.length > 28 ? t.slice(0, 26) + '…' : t;
+      })
+      .attr('text-anchor', 'middle')
+      .attr('dy', d => nodeR(d) + 11)
+      .attr('font-family', 'var(--m-display)')
+      .attr('font-size', d => d.type === 'project' ? '10px' : '8.5px')
+      .attr('font-weight', d => d.type === 'project' ? '600' : '400')
+      .attr('fill', 'var(--m-ink)')
+      .attr('opacity', 0.7)
+      .style('pointer-events', 'none')
+      .style('user-select', 'none');
+
+    nodeElements = nodeGroup;
+
+    // Tick
+    simulation.on('tick', () => {
+      linkElements
+        .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+      nodeGroup.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+
+    // Build legend from actual types present
+    const typeCounts = {};
+    nodes.forEach(n => { typeCounts[n.type] = (typeCounts[n.type] || 0) + 1; });
+    buildLegend(typeCounts);
+  }
+
+  /* ── Highlight ──────────────────────────────────────────── */
+  function highlightNode(d) {
+    const connected = new Set([d.id]);
+    allEdges.forEach(e => {
+      if (e.source === d.id || (e.source && e.source.id === d.id)) connected.add(typeof e.target === 'object' ? e.target.id : e.target);
+      if (e.target === d.id || (e.target && e.target.id === d.id)) connected.add(typeof e.source === 'object' ? e.source.id : e.source);
+    });
+    nodeElements.attr('opacity', n => connected.has(n.id) ? 1 : 0.08);
+    linkElements.attr('opacity', e => {
+      const s = typeof e.source === 'object' ? e.source.id : e.source;
+      const t = typeof e.target === 'object' ? e.target.id : e.target;
+      return (s === d.id || t === d.id) ? 0.7 : 0.03;
+    });
+  }
+
+  function unhighlight() {
+    if (nodeElements) nodeElements.attr('opacity', 1);
+    if (linkElements) linkElements.attr('opacity', 0.35);
+  }
+
+  /* ── Detail panel ───────────────────────────────────────── */
+  function showDetail(d, edges) {
+    highlightedId = d.id;
+    highlightNode(d);
+
+    const panel = document.getElementById('kg-detail');
+    const body = document.getElementById('kg-detail-body');
+    const color = TYPE_COLORS[d.type] || '#666c63';
+
+    // Find connections
+    const connections = [];
+    allEdges.forEach(e => {
+      const s = typeof e.source === 'object' ? e.source.id : e.source;
+      const t = typeof e.target === 'object' ? e.target.id : e.target;
+      if (s === d.id) {
+        const target = allNodes.find(n => n.id === t);
+        if (target) connections.push({node: target, label: e.label, dir: '→'});
+      } else if (t === d.id) {
+        const source = allNodes.find(n => n.id === s);
+        if (source) connections.push({node: source, label: e.label, dir: '←'});
+      }
+    });
+
+    let html = `
+      <div class="u-mb-3">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};vertical-align:middle;margin-right:6px;"></span>
+        <span class="u-mono" style="letter-spacing:0.1em;color:${color};">${(TYPE_LABELS[d.type]||d.type).toUpperCase()}</span>
+      </div>
+      <div class="u-mb-2 u-title" style="font-weight:600;line-height:1.35;">
+        ${d.title}
+      </div>`;
+
+    // Type-specific details
+    if (d.date) html += `<div class="u-label u-mb-2">${d.date}</div>`;
+    if (d.authors) html += `<div class="u-mb-1" style="font-family:var(--m-display);font-size:var(--t-micro);color:var(--m-muted);">${d.authors}</div>`;
+    if (d.journal) html += `<div class="u-mb-1 u-ed" style="font-size:var(--t-micro);">${d.journal} ${d.year||''}</div>`;
+    if (d.doi) html += `<div class="u-label u-mb-1">DOI: ${d.doi}</div>`;
+    if (d.domain) html += `<div class="u-label u-mb-1">Domain: ${d.domain}</div>`;
+    if (d.status) html += `<div class="u-label u-mb-1">Status: ${d.status}</div>`;
+    if (d.signal) html += `<div class="u-mb-1 u-mono" style="color:${color};">Signal: ${d.signal}</div>`;
+    if (d.feasibility) html += `<div class="u-label u-mb-1">Feasibility: ${d.feasibility}</div>`;
+    if (d.definition) html += `<div style="font-family:var(--m-display);font-size:var(--t-micro);color:var(--m-ink);line-height:1.45;margin:var(--m-space-2) 0;padding:var(--m-space-2) var(--m-space-3);background:var(--m-surface-2);border-radius:var(--m-radius);">${d.definition}</div>`;
+    if (d.summary) html += `<div style="font-family:var(--m-display);font-size:var(--t-micro);color:var(--m-ink);line-height:1.45;margin:var(--m-space-2) 0;padding:var(--m-space-2) var(--m-space-3);background:var(--m-surface-2);border-radius:var(--m-radius);">${d.summary}</div>`;
+    if (d.next_step) html += `<div style="font-family:var(--m-display);font-size:var(--t-micro);color:var(--m-ink);line-height:1.45;margin:var(--m-space-2) 0;"><strong>Next:</strong> ${d.next_step}</div>`;
+    if (d.decisions) html += `<div style="font-family:var(--m-display);font-size:var(--t-micro);color:var(--m-ink);line-height:1.45;margin:var(--m-space-2) 0;"><strong>Decisions:</strong> ${d.decisions}</div>`;
+
+    // Tags
+    if (d.tags && d.tags.length) {
+      html += '<div style="display:flex;flex-wrap:wrap;gap:var(--m-space-1);margin:var(--m-space-2) 0;">';
+      d.tags.forEach(t => {
+        html += `<span class="u-label" style="letter-spacing:0.06em;padding:1px 7px;border-radius:var(--m-radius-pill);background:var(--m-surface-3);">${t}</span>`;
+      });
+      html += '</div>';
+    }
+
+    // Connections
+    if (connections.length) {
+      html += `<div class="u-rule-t" style="margin-top:var(--m-space-3);padding-top:10px;">
+        <div class="u-label u-mb-2">${connections.length} CONNECTION${connections.length>1?'S':''}</div>`;
+      connections.slice(0, 15).forEach(c => {
+        const cc = TYPE_COLORS[c.node.type] || '#666c63';
+        html += `<div class="u-row" style="gap:var(--m-space-1);padding:var(--m-space-1) 0;font-family:var(--m-display);font-size:var(--t-micro);cursor:pointer;"
+                      onclick="(function(){var ns=document.querySelectorAll('.kg-node');/* TODO: focus */})()" role="button" tabindex="0">
+          <span class="u-fixed" style="width:6px;height:6px;border-radius:50%;background:${cc};"></span>
+          <span class="u-grow u-truncate" style="color:var(--m-ink);">${c.node.title}</span>
+          <span class="u-label u-fixed">${c.label}</span>
+        </div>`;
+      });
+      if (connections.length > 15) {
+        html += `<div class="u-label" style="margin-top:var(--m-space-1);">+ ${connections.length - 15} more</div>`;
+      }
+      html += '</div>';
+    }
+
+    body.innerHTML = html;
+    panel.style.display = 'block';
+  }
+
+  /* ── Repaint on theme change ────────────────────────────────
+     The app supports live theme switching (base.html applyTheme sets
+     data-theme on <html>). CSS-driven colour follows automatically, but the
+     D3 nodes were painted with values resolved at draw time, so they must be
+     re-read and re-applied. Observing the attribute is implementation-agnostic. */
+  function repaintRamp() {
+    readChartRamp();
+    if (!nodeElements) return;
+    nodeElements.selectAll('circle')
+      .attr('fill', d => TYPE_COLORS[d.type] || '#666c63')
+      .attr('stroke', d => d3.color(TYPE_COLORS[d.type] || '#666c63').darker(0.4));
+  }
+
+  new MutationObserver(repaintRamp).observe(document.documentElement, {
+    attributes: true, attributeFilter: ['data-theme']
+  });
+
+  /* ── Initial load ─────────────────────────────────────────
+     HTMX appends this partial's <script src="d3.min.js"> and runs the inline
+     script straight after — but an EXTERNAL script loads asynchronously, so
+     d3 is routinely still undefined when we reach this line. The first
+     kgReload() then threw inside renderGraph, the catch painted "Error
+     loading graph" over the panel, and nothing retried. Measured: baseline
+     load drew 0 nodes; delaying the data response 3s so d3 lands first drew
+     all 512. Wait for the global rather than assuming it. ──────────────── */
+  function whenD3Ready(fn, waited) {
+    if (window.d3 && d3.forceSimulation) { fn(); return; }
+    waited = (waited || 0) + 50;
+    if (waited > 10000) {
+      console.error('kg: d3 never became available after 10s');
+      var el = document.getElementById('kg-loading');
+      if (el) el.innerHTML =
+        '<div class="u-mono" style="color:var(--m-alert);">Graph library did not load</div>';
+      return;
+    }
+    setTimeout(function () { whenD3Ready(fn, waited); }, 50);
+  }
+  whenD3Ready(kgReload);
+})();
+</script>
+{% endraw %}

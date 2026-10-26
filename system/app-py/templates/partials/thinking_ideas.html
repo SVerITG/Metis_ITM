@@ -1,0 +1,29 @@
+<!-- thinking_ideas.html — Editorial idea list -->
+{% if not ideas %}
+<div class="panel panel-pad" style="text-align:center;padding:var(--m-space-5) var(--m-space-5);border:1px dashed var(--m-line);">
+  <p class="ed" style="font-size:var(--t-body);color:var(--m-muted);margin:0 0 var(--m-space-2);">
+    No ideas captured yet.
+  </p>
+  <p class="ed" style="font-size:var(--t-small);color:var(--m-muted);margin:0;">
+    Press <kbd>Ctrl+K</kbd> (or <kbd>⌘K</kbd>) and prefix with <code>i:</code>. Cross-pollination runs automatically and surfaces connections.
+  </p>
+</div>
+{% else %}
+<div class="panel">
+  {% for idea in ideas %}
+  <div class="nb-row">
+    <div class="nb-when">{{ (idea.created_at or '')[:10] }} · IDEA</div>
+    <div class="nb-body">{{ idea.content }}</div>
+    {% if idea.tags %}
+    <div class="nb-foot">
+      <div style="display:flex;gap:var(--m-space-2);">
+        {% for tag in idea.tags.split(',')[:3] %}
+        <span class="chip chip--mute" style="font-size:var(--t-micro);">{{ tag.strip() }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

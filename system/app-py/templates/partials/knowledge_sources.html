@@ -1,0 +1,44 @@
+{% from "partials/_section.html" import sec_label %}
+<div>
+  {{ sec_label("Sources · recently clipped", tail="IN THE HAND") }}
+  <div class="panel">
+    {% if sources %}
+      {% for source in sources %}
+      <div style="
+            display:grid;
+            grid-template-columns:100px 1fr 160px 80px;
+            gap:20px;
+            align-items:center;
+            padding:14px 24px;
+            {% if not loop.last %}border-bottom:1px solid var(--m-rule-soft);{% endif %}
+           ">
+        <!-- Tag / source type -->
+        <div style="font-family:var(--m-mono);font-size:11px;letter-spacing:0.18em;color:{{ source.tag_color }};text-transform:uppercase;">
+          {{ source.tag }}
+        </div>
+        <!-- Title + author -->
+        <div>
+          <div class="u-title u-title--lg">{{ source.title }}</div>
+          {% if source.by %}
+          <div class="u-ed" style="font-size:var(--t-small);margin-top:var(--m-space-1);">{{ source.by }}</div>
+          {% endif %}
+        </div>
+        <!-- Date -->
+        <div class="tnum u-label">
+          {{ source.when }}
+        </div>
+        <!-- Chip -->
+        <div style="text-align:right;">
+          {% if source.doi %}
+          <span class="u-label" style="display:inline-flex;align-items:center;padding:var(--m-space-1) var(--m-space-2);background:var(--m-surface-2);border-radius:var(--m-radius-sm);">
+            DOI
+          </span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-row">No sources clipped yet. Ask Metis to find literature on a topic and it lands here.</div>
+    {% endif %}
+  </div>
+</div>

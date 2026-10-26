@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% from "partials/_section.html" import sec_label, zone %}
+{% block title %}Reflection{% endblock %}
+
+{#
+  ══════════════════════════════════════════════════════════════════════════════
+  REFLECTION — three piles, one archive.
+
+  WHAT WAS WRONG. The surface stacked seven panels down one page — threads,
+  dialogue, brainstorm, mindmap, cross-pollination, the knowledge graph and
+  graphify analytics — all fetched on load, none of them choosable. Worse, the
+  thread rail and the dialogue panel both selected from `ideas`, so "thread" and
+  "idea" were two renderings of one table and could not mean different things.
+
+  WHAT IT IS NOW. Three piles that are actually different, each with a count and
+  a last-worked date, and clicking a pile is how you choose the view:
+
+    Ideas    exploration of thoughts — capture, and re-read
+    Notes    the journal, by day
+    Threads  a question you keep returning to, and what it touches
+
+  plus an Archive, because nothing here is ever deleted.
+
+  THE GRAPH. It used to draw everything, which is why it read as noise. It is now
+  scoped to ONE thread and one hop — the same conclusion Obsidian reached with
+  its local graph and NotebookLM reached by listing sources instead of drawing at
+  all. The thread is the query.
+  ══════════════════════════════════════════════════════════════════════════════
+#}
+
+{% block content %}
+<div class="page">
+
+  <div class="page-head">
+    <div>
+      <div class="u-label u-mb-1" style="letter-spacing:0.2em;text-transform:uppercase;">SURFACE 03</div>
+      <h1 style="font-family:var(--m-display);font-size:34px;font-weight:500;letter-spacing:-0.025em;color:var(--m-ink);margin:0;">Reflection</h1>
+    </div>
+    <div class="page-meta" hx-get="/api/partial/thinking/meta" hx-trigger="load" hx-swap="innerHTML">— OPEN · LAST TOUCHED —</div>
+  </div>
+
+  {#- The value boxes ARE the tab strip. See partials/reflection_boxes.html. -#}
+  <div id="refl-boxes" hx-get="/api/partial/reflection/boxes"
+       hx-trigger="load" hx-swap="innerHTML">
+    <div class="panel skeleton skeleton-box" style="height:84px;"></div>
+  </div>
+
+  {#- ── Ideas ─────────────────────────────────────────────────────────────── -#}
+  <div class="ui-tabpane" data-tabset="reflection" data-tab="ideas">
+
+    {#- BRAINSTORM FIRST. It was at the bottom of this pane, below the mindmap,
+        which put the one thing you come here to START at the end of the page.
+        Choosing the material is half the feature, so it needs the room. -#}
+    {% call zone("Brainstorm", key="refl-bs", kind="thinking",
+                 tail="CHOOSE WHAT TO THINK ABOUT, THEN GO", collapsible=False) %}
+      <div hx-get="/api/partial/reflection/brainstorm"
+           hx-trigger="revealed once" hx-swap="outerHTML">
+        <div class="panel skeleton skeleton-box" style="height:120px;"></div>
+      </div>
+    {% endcall %}
+
+    {% call zone("Ideas", key="refl-ideas", kind="thinking",
+                 tail="EXPLORATION OF THOUGHTS", collapsible=False) %}
+      <div id="refl-ideas" hx-get="/api/partial/reflection/ideas"
+           hx-trigger="revealed once" hx-swap="innerHTML">
+        <div class="panel skeleton skeleton-box" style="height:160px;"></div>
+      </div>
+    {% endcall %}
+
+    {#- The mindmap and the brainstorm launcher were on the old page and are kept
+        here rather than dropped: they are both about IDEAS specifically — how
+        the open ones cluster, and taking one somewhere it can be pushed on. What
+        changed is that they no longer load on a surface you opened to read a
+        journal. -#}
+    <div style="margin-top:var(--m-space-5);">
+      <h2 class="sec-label u-row u-mb-3" style="gap:var(--m-space-3);">
+        <span>Idea mindmap</span>
+        <span class="u-ed" style="font-size:var(--t-meta);text-transform:none;letter-spacing:0;">how your open ideas cluster and connect</span>
+        <button class="btn btn--ghost btn--caps" style="margin-left:auto;" onclick="launchBrainstorm('mindmap')">Expand in Claude</button>
+      </h2>
+      <div class="panel panel-pad"
+           hx-get="/api/partial/thinking/mindmap"
+           hx-trigger="revealed once" hx-swap="innerHTML"
+           style="padding:var(--m-space-4) var(--m-space-5);">
+        <p class="u-ed" style="font-size:var(--t-small);margin:0;">Laying out your idea mindmap…</p>
+      </div>
+    </div>
+
+    {#- Past sessions only. The LAUNCHER moved to the top of this pane; leaving
+        a second one here would be two controls for one act, which is how a
+        reader stops knowing which is the real one. -#}
+    <div style="margin-top:var(--m-space-5);"
+         hx-get="/api/partial/thinking/brainstorm-sessions"
+         hx-trigger="revealed once" hx-swap="innerHTML">
+      <div class="panel panel-pad skeleton panel--md"></div>
+    </div>
+  </div>
+
+  {#- ── Notes — the journal ───────────────────────────────────────────────── -#}
+  <div class="ui-tabpane" data-tabset="reflection" data-tab="notes" hidden>
+    {% call zone("The journal", key="refl-journal", kind="thinking",
+                 tail="BY DAY", collapsible=False) %}
+      <div id="refl-journal" hx-get="/api/partial/reflection/journal"
+           hx-trigger="revealed once" hx-swap="innerHTML">
+        <div class="panel skeleton skeleton-box" style="height:160px;"></div>
+      </div>
+    {% endcall %}
+  </div>
+
+  {#- ── Threads ───────────────────────────────────────────────────────────── -#}
+  <div class="ui-tabpane" data-tabset="reflection" data-tab="threads" hidden>
+    {% call zone("Threads", key="refl-threads", kind="thinking",
+                 tail="A QUESTION, AND WHAT IT TOUCHES", collapsible=False) %}
+      <div id="refl-threads" hx-get="/api/partial/reflection/threads"
+           hx-trigger="revealed once" hx-swap="innerHTML">
+        <div class="panel skeleton skeleton-box" style="height:220px;"></div>
+      </div>
+    {% endcall %}
+
+    {#- Cross-pollination belongs with threads, not on its own: it answers the
+        same question one hop further out — what else in the work speaks to
+        this. Kept below the thread so it reads as the wider view, not a rival. -#}
+    <div style="margin-top:var(--m-space-5);"
+         hx-get="/api/partial/today/brief-bridges"
+         hx-trigger="revealed once" hx-swap="innerHTML">
+      <div>
+        {{ sec_label("Connections across your research", tail="CROSS-POLLINATION") }}
+        <div class="panel skeleton skeleton-box" style="height:120px;"></div>
+      </div>
+    </div>
+  </div>
+
+  {#- ── Focus ─────────────────────────────────────────────────────────────
+      The one picture on this surface that is not about connections. It asks
+      whether attention went where it was committed — the question a knowledge
+      graph cannot answer and keeps being asked to. -#}
+  <div class="ui-tabpane" data-tabset="reflection" data-tab="focus" hidden>
+    {% call zone("Where your attention went", key="refl-focus", kind="thinking",
+                 tail="COMMITMENTS AND INTERESTS, BY HOW LONG SINCE EACH WAS TOUCHED",
+                 collapsible=False) %}
+      <div id="refl-focus" hx-get="/api/partial/reflection/focus"
+           hx-trigger="revealed once" hx-swap="innerHTML">
+        <div class="panel skeleton skeleton-box" style="height:420px;"></div>
+      </div>
+    {% endcall %}
+  </div>
+
+  {#- ── Archive ───────────────────────────────────────────────────────────── -#}
+  <div class="ui-tabpane" data-tabset="reflection" data-tab="archive" hidden>
+    {% call zone("Archive", key="refl-archive", kind="system",
+                 tail="NOTHING IS EVER DELETED", collapsible=False) %}
+      <div id="refl-archive" hx-get="/api/partial/reflection/archive"
+           hx-trigger="revealed once" hx-swap="innerHTML">
+        <div class="panel skeleton skeleton-box" style="height:120px;"></div>
+      </div>
+    {% endcall %}
+
+    {#- THE WHOLE-GRAPH VIEWS LIVE HERE NOW, and that is the point of moving
+        them. They are not wrong — a hub-and-bridge analysis of everything is a
+        real thing to want once in a while — but they were the loudest thing on
+        a surface whose job is thinking about ONE question. They are kept, one
+        click away, and they no longer load unless asked for. -#}
+    <details class="rarch-whole">
+      <summary>The whole graph, and the hub analysis</summary>
+      <p class="rarch-whole-note">
+        Everything at once, which is why it is here rather than beside a thread.
+        Useful for a survey; useless for a question.
+      </p>
+      <div hx-get="/api/partial/knowledge/graph"
+           hx-trigger="revealed once" hx-swap="outerHTML">
+        <div class="panel skeleton skeleton-box" style="height:420px;"></div>
+      </div>
+      <div style="margin-top:var(--m-space-5);"
+           hx-get="/api/partial/thinking/graphify-analytics"
+           hx-trigger="revealed once" hx-swap="outerHTML">
+        <div class="panel skeleton skeleton-box" style="height:240px;"></div>
+      </div>
+    </details>
+  </div>
+
+</div>
+{% endblock %}

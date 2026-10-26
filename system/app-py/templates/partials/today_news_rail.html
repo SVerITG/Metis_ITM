@@ -1,0 +1,156 @@
+{% from "partials/_item.html" import actions, tags, tag_datalist %}
+{# News Dispatch — Today's shortlist, redesigned 2026-09-18.
+   Context: items (list), period, folded (bool). No topics, no per-topic
+   summaries: that browse lives on the full /news tab. This is "close to your
+   work" only, and a verdict here retires the item from THIS list for good —
+   see today_news_rail() in routers/today.py for why there is no relevance
+   floor. #}
+{% from "partials/_update_menu.html" import update_menu %}
+
+{# ── Signal strength colors ── #}
+{% set signal_colors = {
+  'critical': 'var(--m-alert)',
+  'high': 'var(--m-chart-3)',
+  'medium': 'var(--m-chart-4)',
+  'low': 'var(--m-muted)',
+  'routine': 'var(--m-chart-8)'
+} %}
+{% set signal_bg = {
+  'critical': 'rgba(220,38,38,0.08)',
+  'high': 'rgba(234,88,12,0.06)',
+  'medium': 'rgba(202,138,4,0.05)',
+  'low': 'rgba(107,114,128,0.05)',
+  'routine': 'color-mix(in srgb, var(--m-chart-8) 4%, transparent)'
+} %}
+
+{{ tag_datalist(all_tags or []) }}
+<div class="today-news-rail u-mb-6" id="news-surface">
+
+  {#- THE HEADING, OR THE FOLD'S SUMMARY — never both. See the fold note in
+      today.html: on Today this rail lives inside <details class="dispatch-fold">,
+      whose <summary> already carries a label, so an inner h2 would print it
+      twice. Folded, the count goes out-of-band into `#dispatch-counts`
+      instead. -#}
+  {% if not folded %}
+  <h2 class="sec-label u-mb-3">
+    <span>Close to your work</span>
+    <span class="tail u-row">
+      {% if items %}
+      <span class="u-mono" style="letter-spacing:0.1em;">{{ items|length }} WAITING</span>
+      {% endif %}
+      <a class="u-label" href="/news" style="text-decoration:none;">ALL NEWS →</a>
+    </span>
+  </h2>
+  {% else %}
+  <span id="dispatch-counts" hx-swap-oob="innerHTML">
+    {% if items %}{{ items|length }} close to your work{% else %}no news close to your work today{% endif %}
+  </span>
+  {% endif %}
+
+  <div class="panel panel--clip">
+
+    <!-- ── Controls bar ── -->
+    <div class="u-row u-row--wrap u-rule" style="justify-content:space-between;padding:var(--m-space-3) var(--m-space-4);background:var(--m-surface-2);">
+      <div class="u-row" style="gap:var(--m-space-3);">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--m-accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+        </svg>
+        <span class="u-mono" style="letter-spacing:0.12em;color:var(--m-ink);">
+          {% if period == 'week' %}THIS WEEK{% else %}THIS MONTH{% endif %}
+        </span>
+      </div>
+      <div class="u-row">
+        <!-- Period toggle -->
+        <div style="display:flex;border:1px solid var(--m-rule);border-radius:var(--m-radius);overflow:hidden;">
+          <button style="padding:4px 10px;font-family:var(--m-mono);font-size:11px;letter-spacing:0.1em;border:none;cursor:pointer;
+                         background:{% if period == 'week' %}var(--m-accent){% else %}transparent{% endif %};
+                         color:{% if period == 'week' %}var(--m-on-accent){% else %}var(--m-muted){% endif %};"
+                  hx-get="/api/partial/today/news-rail?period=week"
+                  hx-target="#news-surface" hx-swap="outerHTML show:none focus-scroll:false">WEEK</button>
+          <button style="padding:4px 10px;font-family:var(--m-mono);font-size:11px;letter-spacing:0.1em;border:none;border-left:1px solid var(--m-rule);cursor:pointer;
+                         background:{% if period == 'month' %}var(--m-accent){% else %}transparent{% endif %};
+                         color:{% if period == 'month' %}var(--m-on-accent){% else %}var(--m-muted){% endif %};"
+                  hx-get="/api/partial/today/news-rail?period=month"
+                  hx-target="#news-surface" hx-swap="outerHTML show:none focus-scroll:false">MONTH</button>
+        </div>
+        <!-- Update dispatch -->
+        {%- set claude_news_prompt -%}
+Update my Metis news dispatch. Using the metis-rc tools, scan the latest {{ news_prompt_scope or 'research and science' }} news, write fresh topic summaries, save them, then show me the highlights most relevant to my work.
+        {%- endset -%}
+        {% set news_update_opts = [
+          {'icon': '✦', 'label': 'With Claude Desktop', 'sub': 'free · runs on your subscription, no API tokens',
+           'href': 'claude://claude.ai/new?q=' ~ (claude_news_prompt | trim | urlencode), 'primary': true,
+           'title': 'Open Claude Desktop to scan the news and write summaries — no API key needed.'}
+        ] %}
+        {{ update_menu('news', news_update_opts, label='Update', align='right') }}
+      </div>
+    </div>
+
+    {# ── The shortlist ── #}
+    {% if items %}
+    <div class="u-col" style="gap:var(--m-space-1);padding:var(--m-space-2);">
+      {% for item in items %}
+      {#- The row was an <a> wrapping everything, which is exactly why this
+          rail had no actions: a button inside an anchor navigates away
+          instead of firing. Row is a div; the TITLE is the link. -#}
+      {% set st = (states or {}).get(item.id) %}
+      <div class="tnr-row{% if st and st.state %} tnr-row--{{ st.state }}{% endif %} row-hit" style="display:block;padding:var(--m-space-2) var(--m-space-3);border-radius:var(--m-radius);transition:background 100ms;">
+        {# Meta row: time + signal badges #}
+        <div class="u-row u-mb-1" style="flex-wrap:wrap;">
+          <span class="u-label">{{ item.time }}</span>
+          {% if item.domain %}
+          <span class="u-label">{{ item.domain }}</span>
+          {% endif %}
+          {% if item.match == 'top' %}
+          <span class="u-mono" style="letter-spacing:0.08em;padding:1px 7px;border-radius:var(--m-radius-pill);background:color-mix(in srgb, var(--m-chart-2) 10%, transparent);color:var(--m-chart-2);">
+            <svg viewBox="0 0 16 16" width="8" height="8" fill="var(--m-chart-2)" stroke="none" style="vertical-align:-1px;margin-right:2px;">
+              <polygon points="8 1 10 6 16 6.5 11.5 10.5 13 16 8 13 3 16 4.5 10.5 0 6.5 6 6"/>
+            </svg>
+            YOUR WORK
+          </span>
+          {% elif item.match == 'yes' %}
+          <span class="u-mono" style="letter-spacing:0.08em;padding:1px 7px;border-radius:var(--m-radius-pill);background:color-mix(in srgb, var(--m-chart-1) 8%, transparent);color:var(--m-chart-1);">RELEVANT</span>
+          {% endif %}
+          {% if item.signal %}
+          <span style="font-family:var(--m-mono);font-size:11px;letter-spacing:0.08em;padding:1px 7px;border-radius:100px;
+                       background:{{ signal_bg.get(item.signal_class, 'var(--m-surface-3)') }};
+                       color:{{ signal_colors.get(item.signal_class, 'var(--m-muted)') }};">{{ item.signal }}</span>
+          {% endif %}
+        </div>
+        {# Title — the link, and the only link #}
+        <div style="font-family:var(--m-display);font-size:var(--t-small);line-height:1.4;font-weight:500;">
+          {% if item.source_url or item.url %}
+          <a href="{{ item.source_url or item.url }}" target="_blank" rel="noopener"
+             style="color:var(--m-ink);text-decoration:none;border-bottom:1px solid transparent;"
+             onmouseover="this.style.borderBottomColor='var(--m-accent)'"
+             onmouseout="this.style.borderBottomColor='transparent'">{{ item.title }}</a>
+          {% else %}<span style="color:var(--m-ink);">{{ item.title }}</span>{% endif %}
+        </div>
+        {# Summary #}
+        {% if item.summary %}
+        <div style="font-family:var(--m-display);font-size:var(--t-meta);color:var(--m-muted);line-height:1.45;margin-top:var(--m-space-1);">{{ item.summary }}</div>
+        {% endif %}
+        <div class="item-foot u-row u-row--wrap" style="gap:var(--m-space-2);">
+          {{ tags(st) }}
+          {{ actions('news', item.id, item.title,
+                     item.source_url or item.url or '', item.domain, st,
+                     '#news-surface', 'today-news', 'outerHTML') }}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <!-- Empty state -->
+    <div style="padding:var(--m-space-6) var(--m-space-5);text-align:center;">
+      <svg class="u-mb-3" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="var(--m-muted)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="opacity:.45;">
+        <path d="M19 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1m2 13a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2Z"/>
+      </svg>
+      <div class="u-mb-1 u-title">No more news close to your work today.</div>
+      <div style="font-family:var(--m-display);font-size:var(--t-meta);color:var(--m-muted);line-height:1.5;">
+        {% if period == 'week' %}Try MONTH above for a wider window, or {% endif %}<a href="/news" style="color:var(--m-accent);">browse everything on the News tab</a>.
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>

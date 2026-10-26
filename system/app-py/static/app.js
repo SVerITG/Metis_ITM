@@ -1,0 +1,3805 @@
+// Metis Dashboard — App JS  v7.0
+// Editorial layout + fully-wired actions
+
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+
+function setActiveTab(btn) {
+  document.querySelectorAll('.nav-tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// True when the keystroke belongs to something the user is typing into. A bare
+// "/" shortcut without this steals the slash from every search field, textarea
+// and contenteditable on the page — including the search dialog's own input.
+function _isTyping(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  const t = el.tagName;
+  return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT';
+}
+
+document.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    openCapture();
+  }
+  // "/" opens search. Not Ctrl/⌘+K — that is Capture, and not Ctrl+F either,
+  // which belongs to the browser and which people rely on for find-in-page.
+  if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !_isTyping(e.target)) {
+    e.preventDefault();
+    openSearch();
+  }
+  if (e.key === 'Escape') {
+    closeCapture();
+    closeNewsModal();
+    closeSearch();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Search dialog — one control, one endpoint
+// ---------------------------------------------------------------------------
+// Replaced two always-visible search boxes (top bar + Today page) that called
+// different endpoints and so answered the same question differently. This uses
+// `unified-search`, the one that fans out across the library silos and memory.
+
+function openSearch() {
+  const overlay = document.getElementById('search-overlay');
+  if (!overlay) return;
+  overlay.style.display = 'block';
+  overlay.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  // Focus AFTER display: focusing a hidden element is a no-op, and then the
+  // first keystroke lands on the page behind the dialog.
+  requestAnimationFrame(() => {
+    const inp = document.getElementById('search-modal-input');
+    if (inp) { inp.focus(); inp.select(); }
+  });
+}
+
+function closeSearch() {
+  const overlay = document.getElementById('search-overlay');
+  if (!overlay || overlay.style.display !== 'block') return;
+  overlay.style.display = 'none';
+  overlay.setAttribute('aria-hidden', 'true');
+  // Only release the scroll lock if no other dialog still wants it.
+  const cap = document.getElementById('capture-overlay');
+  if (!cap || cap.style.display !== 'block') document.body.style.overflow = '';
+}
+
+function handleSearchOverlayClick(event) {
+  if (event.target === document.getElementById('search-overlay')) closeSearch();
+}
+
+// ---------------------------------------------------------------------------
+// Capture modal (Ctrl+K) — supports optional prefillMode
+// ---------------------------------------------------------------------------
+
+const _CAPTURE_PREFIX = {
+  idea: 'i:', note: 'n:', task: 't:', question: 'q:',
+};
+
+function openCapture(prefillMode) {
+  const overlay = document.getElementById('capture-overlay');
+  if (!overlay) return;
+
+  htmx.ajax('GET', '/api/capture-modal', {
+    target: '#capture-modal-inner',
+    swap: 'innerHTML',
+  });
+
+  overlay.style.display = 'block';
+  document.body.style.overflow = 'hidden';
+
+  setTimeout(() => {
+    const ta = document.getElementById('capture-text');
+    if (!ta) return;
+
+    // Prefill prefix if mode was supplied
+    if (prefillMode && _CAPTURE_PREFIX[prefillMode]) {
+      ta.value = _CAPTURE_PREFIX[prefillMode] + ' ';
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+    }
+    ta.focus();
+
+    // Live prefix detection
+    ta.addEventListener('input', function () {
+      const val = ta.value;
+      const badge = document.getElementById('capture-type-badge');
+      if (!badge) return;
+      let html = '<span class="capture-type-badge capture-type-idea">Idea</span>';
+      if (val.startsWith('n:') || val.startsWith('note:')) {
+        html = '<span class="capture-type-badge capture-type-note">Note</span>';
+      } else if (val.startsWith('t:') || val.startsWith('task:')) {
+        html = '<span class="capture-type-badge capture-type-task">Task</span>';
+      } else if (val.startsWith('q:') || val.startsWith('question:')) {
+        html = '<span class="capture-type-badge capture-type-question">Question</span>';
+      }
+      badge.innerHTML = html;
+    });
+  }, 100);
+}
+
+function closeCapture() {
+  const overlay = document.getElementById('capture-overlay');
+  if (overlay) overlay.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function handleOverlayClick(event) {
+  if (event.target === document.getElementById('capture-overlay')) {
+    closeCapture();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Launch programs — quick actions open the right tool with prompt + context
+// ---------------------------------------------------------------------------
+
+// Each action defines: which target to launch, which prompt to send, whether
+// the launch is scoped to the focus project or to the RC root.
+const _LAUNCHER_CONFIG = {
+  brainstorm: { target: 'claude_code', prompt: '/metis_brainstorm',          scope: 'focus' },
+  write:      { target: 'claude_code', prompt: 'Help me write — work on my active article', scope: 'focus' },
+  review:     { target: 'vscode',      prompt: '',                           scope: 'focus' },
+  meeting:    { target: 'claude_code', prompt: 'Prepare me for my next meeting from the notes on file', scope: 'rc' },
+  inbox:      { target: 'claude_code', prompt: '/metis_inbox',               scope: 'rc' },
+};
+
+async function _getFocusProjectId() {
+  try {
+    const res = await fetch('/api/project/focus');
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.project_id || null;
+  } catch {
+    return null;
+  }
+}
+
+async function launchPrompt(key) {
+  const cfg = _LAUNCHER_CONFIG[key];
+  if (!cfg) return;
+
+  let projectId = 'rc-root';
+  if (cfg.scope === 'focus') {
+    const p = await _getFocusProjectId();
+    if (p) projectId = p;
+  }
+
+  const body = new URLSearchParams({
+    project_id: projectId,
+    target: cfg.target,
+    prompt: cfg.prompt || '',
+  });
+
+  // Copy prompt to clipboard as a safety net in case the launch fails
+  if (cfg.prompt) {
+    try { await navigator.clipboard.writeText(cfg.prompt); } catch { /* noop */ }
+  }
+
+  try {
+    const res = await fetch('/api/project/launch', { method: 'POST', body });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      const msg = cfg.prompt
+        ? `Opening ${cfg.target} with "${cfg.prompt}"`
+        : `Opening ${cfg.target} · ${data.project || 'project'}`;
+      showToast(`<i class="bi bi-box-arrow-up-right toast-icon"></i>${msg}`);
+      // If there's a follow-up (e.g. open VS Code AND Claude Code after), fire it
+      if (cfg.followUp) {
+        setTimeout(() => {
+          const body2 = new URLSearchParams({
+            project_id: projectId,
+            target: cfg.followUp.target,
+            prompt: cfg.followUp.prompt || '',
+          });
+          fetch('/api/project/launch', { method: 'POST', body: body2 });
+        }, 500);
+      }
+    } else {
+      showToast(`<i class="bi bi-exclamation-triangle"></i>${data.message || `I couldn't open ${cfg.target} — try again, or check that it's installed`}. Prompt copied — paste manually.`);
+    }
+  } catch (e) {
+    showToast(`<i class="bi bi-exclamation-triangle"></i>I couldn't open ${cfg.target} — try again, or check that it's installed. Prompt copied to clipboard.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard scan — trigger a refresh of focus/activity/news-rail
+// ---------------------------------------------------------------------------
+
+async function runDashboardScan() {
+  showToast('<i class="bi bi-arrow-clockwise toast-icon"></i>Scanning for changes…');
+  // Re-trigger the HTMX-loaded partials by issuing HTMX GETs
+  const targets = [
+    '/api/partial/today/dateline',
+    '/api/partial/today/focus-thread',
+    '/api/partial/today/activity-feed',
+    '/api/partial/today/news-rail',
+  ];
+  const hosts = document.querySelectorAll(
+    '[hx-get="/api/partial/today/dateline"], [hx-get="/api/partial/today/focus-thread"], [hx-get="/api/partial/today/activity-feed"], [hx-get="/api/partial/today/news-rail"]'
+  );
+  hosts.forEach(el => {
+    if (window.htmx && htmx.trigger) htmx.trigger(el, 'load');
+  });
+  setTimeout(() => {
+    showToast('<i class="bi bi-check2 toast-icon"></i>Scan complete');
+  }, 800);
+}
+
+// ---------------------------------------------------------------------------
+// Content scan — RSS feeds + literature folder
+// ---------------------------------------------------------------------------
+
+async function runContentScan(event) {
+  showToast('<i class="bi bi-broadcast toast-icon"></i>Scanning feeds and literature…');
+  const btn = event && event.target ? event.target.closest('a') : null;
+  if (btn) btn.style.pointerEvents = 'none';
+  try {
+    const res = await fetch('/api/scan/content', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(`<i class="bi bi-check2 toast-icon"></i>Scan complete — ${data.news_added} news · ${data.papers_added} papers`);
+      document.querySelectorAll('[hx-get="/api/partial/today/news-rail"], [hx-get="/api/partial/today/activity-feed"]').forEach(el => {
+        if (window.htmx && htmx.trigger) htmx.trigger(el, 'load');
+      });
+    } else {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Scan failed — see Metis tab');
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Scan failed — network error');
+  } finally {
+    if (btn) btn.style.pointerEvents = '';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler — trigger a job manually from the automation panel
+// ---------------------------------------------------------------------------
+
+async function triggerJob(jobId) {
+  showToast('<i class="bi bi-broadcast toast-icon"></i>Running ' + jobId + '...');
+  try {
+    const res = await fetch('/api/scheduler/jobs/' + jobId + '/run', { method: 'POST' });
+    const data = await res.json();
+    showToast('<i class="bi bi-check2 toast-icon"></i>' + (data.message || 'Job triggered'));
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Trigger failed');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Course Builder — copy prompt to clipboard + notify server
+// ---------------------------------------------------------------------------
+
+// Open a course in a dedicated browser tab (standalone reader).
+function openCourseReader(slug) {
+  window.open(`/course/${slug}`, `course-${slug}`, 'noopener');
+}
+
+// Open a course's external URL in a new browser tab.
+// Called synchronously from an onclick so popup blockers allow it.
+// Falls back to navigating the current tab if the popup is blocked.
+function openCourseExternal(url, title) {
+  if (!url) {
+    showToast('No external URL set for this course.');
+    return;
+  }
+  const win = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!win || win.closed || typeof win.closed === 'undefined') {
+    // Popup blocked — fall back to a direct navigation
+    showToast(`Opening ${title || 'course'}…`);
+    window.location.href = url;
+  } else {
+    showToast(`Opened <strong>${title || 'course'}</strong> in a new tab.`);
+  }
+}
+
+async function completeLesson(slug, lessonId, btn) {
+  try {
+    const res = await fetch(`/api/course/${slug}/lesson/${lessonId}/complete`, { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      if (btn) btn.textContent = 'Marked complete';
+      showToast(`Lesson marked complete — ${data.progress_pct}% through the course.`);
+      if (data.next_lesson_id) {
+        htmx.ajax('GET', `/api/course/${slug}/lesson/${data.next_lesson_id}`,
+          { target: '#lesson-reader-panel', swap: 'innerHTML' });
+      }
+      htmx.ajax('GET', `/api/course/${slug}/overview`,
+        { target: '#course-overview-panel', swap: 'innerHTML' });
+    }
+  } catch (e) {
+    showToast("I couldn't save your lesson progress — try again.");
+  }
+}
+
+async function buildCourse(courseId) {
+  try {
+    const res = await fetch('/api/course/build-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ courseId })
+    });
+    const data = await res.json();
+    if (data.prompt) {
+      await navigator.clipboard.writeText(data.prompt).catch(() => {});
+      await _launchClaudeDesktop();
+      showToast(`<i class="bi bi-clipboard-check toast-icon"></i>Claude Desktop opening — prompt copied for <strong>${data.title || courseId}</strong>`);
+    }
+  } catch (e) {
+    showToast("<i class=\"bi bi-exclamation-circle toast-icon\"></i>I couldn't load that course prompt — try again, or check the Metis tab.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Course Ideas — build via Claude Desktop
+// ---------------------------------------------------------------------------
+
+async function _fetchBuildIdeaPrompt(slug, title, adaptive, topicHint, researchQuestion) {
+  const res = await fetch('/api/course/build-idea', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug, title, adaptive: !!adaptive, topicHint: topicHint || '', researchQuestion: researchQuestion || '' })
+  });
+  return await res.json();
+}
+
+async function _launchClaudeDesktop() {
+  await fetch('/api/launch/claude-desktop', { method: 'POST' }).catch(() => {});
+}
+
+async function buildCourseIdea(slug, title) {
+  try {
+    const data = await _fetchBuildIdeaPrompt(slug, title, false, '');
+    if (data.prompt) {
+      await navigator.clipboard.writeText(data.prompt).catch(() => {});
+      await _launchClaudeDesktop();
+      showToast(`<i class="bi bi-clipboard-check toast-icon"></i>Claude Desktop opening — paste prompt to build <strong>${data.title}</strong>`);
+    }
+  } catch (e) {
+    showToast("<i class=\"bi bi-exclamation-circle toast-icon\"></i>I couldn't prepare the prompt — try again.");
+  }
+}
+
+async function buildAdaptiveCourse(topicSlug, topicTitle) {
+  try {
+    const data = await _fetchBuildIdeaPrompt('statistics-adaptive', topicTitle, true, topicTitle, '');
+    if (data.prompt) {
+      await navigator.clipboard.writeText(data.prompt).catch(() => {});
+      await _launchClaudeDesktop();
+      showToast(`<i class="bi bi-clipboard-check toast-icon"></i>Claude Desktop opening — paste prompt to start adaptive course on <strong>${topicTitle}</strong>`);
+    }
+  } catch (e) {
+    showToast("<i class=\"bi bi-exclamation-circle toast-icon\"></i>I couldn't prepare adaptive course prompt");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Course Wizard — 4-screen intake wizard
+// ---------------------------------------------------------------------------
+
+let _cwCurrentStep = 1;
+
+function openCourseWizard(slug, title) {
+  _cwCurrentStep = 1;
+  document.getElementById('cw-slug').value = slug || '';
+  document.getElementById('cw-title-original').value = title || '';
+  document.getElementById('cw-title').value = title || '';
+
+  // Reset defaults
+  document.getElementById('cw-learner').value = 'yourself';
+  document.getElementById('cw-level').value = 'working';
+  document.getElementById('cw-time').value = '1 weekend';
+  _cwSelectRadio('cw-scope', 'practical');
+  _cwSelectRadio('cw-format', 'reading');
+  _cwSelectRadio('cw-tone', 'friendly');
+  document.getElementById('cw-module-length').value = '30 min';
+  document.getElementById('cw-questions').value = '';
+  document.getElementById('cw-materials').value = '';
+  document.getElementById('cw-exclude').value = '';
+
+  // Reset include chips
+  document.querySelectorAll('#cw-includes .cw-include-chip').forEach(chip => {
+    const defaults = ['worked-examples', 'exercises', 'spaced-rep'];
+    if (defaults.includes(chip.dataset.value)) {
+      chip.classList.add('chip--active');
+    } else {
+      chip.classList.remove('chip--active');
+    }
+  });
+
+  // Show review view, hide confirmation
+  const rv = document.getElementById('cw-review-view');
+  const cv = document.getElementById('cw-confirm-view');
+  if (rv) rv.style.display = '';
+  if (cv) cv.style.display = 'none';
+
+  // Reset title border
+  document.getElementById('cw-title').style.borderColor = '';
+
+  _cwUpdateSteps();
+  document.getElementById('course-wizard-overlay').dataset.open = 'true';
+}
+
+function closeCourseWizard() {
+  document.getElementById('course-wizard-overlay').dataset.open = 'false';
+}
+
+function cwStep(dir) {
+  const next = _cwCurrentStep + dir;
+  // Validate title on step 1 before advancing
+  if (_cwCurrentStep === 1 && dir > 0) {
+    const titleEl = document.getElementById('cw-title');
+    if (!titleEl.value.trim()) {
+      titleEl.style.borderColor = 'var(--m-danger, #dc3545)';
+      titleEl.focus();
+      return;
+    }
+    titleEl.style.borderColor = '';
+  }
+  if (next < 1 || next > 4) return;
+  _cwCurrentStep = next;
+  _cwUpdateSteps();
+  // Build summary when arriving at step 4
+  if (_cwCurrentStep === 4) _cwBuildSummary();
+}
+
+function _cwUpdateSteps() {
+  const titles = ['', 'STEP 1 OF 4 · AUDIENCE', 'STEP 2 OF 4 · CONTENT', 'STEP 3 OF 4 · STYLE', 'STEP 4 OF 4 · REVIEW'];
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById('cw-step-' + i);
+    if (el) el.style.display = (i === _cwCurrentStep) ? '' : 'none';
+  }
+  document.getElementById('cw-step-title').textContent = titles[_cwCurrentStep];
+
+  // Update dots
+  document.querySelectorAll('#cw-dots .cw-dot').forEach(dot => {
+    const s = parseInt(dot.dataset.step, 10);
+    dot.classList.toggle('dot--active', s === _cwCurrentStep);
+    dot.classList.toggle('dot--done', s < _cwCurrentStep);
+  });
+
+  // Show/hide buttons
+  document.getElementById('cw-btn-back').style.display = _cwCurrentStep > 1 ? '' : 'none';
+  document.getElementById('cw-btn-next').style.display = _cwCurrentStep < 4 ? '' : 'none';
+  document.getElementById('cw-btn-submit').style.display = _cwCurrentStep === 4 ? '' : 'none';
+  document.getElementById('cw-btn-close').style.display = 'none';
+}
+
+function _cwSelectRadio(name, value) {
+  const radio = document.querySelector(`input[name="${name}"][value="${value}"]`);
+  if (radio) {
+    radio.checked = true;
+    _cwUpdateRadioCards(name);
+  }
+}
+
+function _cwUpdateRadioCards(name) {
+  // Tiny delay so the browser has time to update the :checked state
+  setTimeout(() => {
+    document.querySelectorAll(`input[name="${name}"]`).forEach(r => {
+      r.closest('.cw-radio-card')?.classList.toggle('card--selected', r.checked);
+    });
+  }, 0);
+}
+
+function _cwToggleChip(chip) {
+  chip.classList.toggle('chip--active');
+}
+
+function _cwGatherIntake() {
+  return {
+    learner: document.getElementById('cw-learner').value,
+    level: document.getElementById('cw-level').value,
+    time_budget: document.getElementById('cw-time').value,
+    scope: document.querySelector('input[name="cw-scope"]:checked')?.value || 'practical',
+    key_questions: document.getElementById('cw-questions').value,
+    materials: document.getElementById('cw-materials').value,
+    out_of_scope: document.getElementById('cw-exclude').value,
+    format: document.querySelector('input[name="cw-format"]:checked')?.value || 'reading',
+    tone: document.querySelector('input[name="cw-tone"]:checked')?.value || 'friendly',
+    module_length: document.getElementById('cw-module-length').value,
+    includes: Array.from(document.querySelectorAll('#cw-includes .chip--active')).map(c => c.dataset.value),
+  };
+}
+
+function _cwEscHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+function _cwBuildSummary() {
+  const intake = _cwGatherIntake();
+  const title = document.getElementById('cw-title').value.trim();
+  const lines = [
+    `<div style="margin-bottom:10px;font-family:var(--m-display);font-size:16px;font-weight:500;">${_cwEscHtml(title)}</div>`,
+    `<div style="display:grid;grid-template-columns:110px 1fr;gap:4px 12px;font-size:13px;">`,
+    `<span style="color:var(--m-muted);">Learner</span><span>${_cwEscHtml(intake.learner)}</span>`,
+    `<span style="color:var(--m-muted);">Level</span><span>${_cwEscHtml(intake.level)}</span>`,
+    `<span style="color:var(--m-muted);">Time</span><span>${_cwEscHtml(intake.time_budget)}</span>`,
+    `<span style="color:var(--m-muted);">Scope</span><span>${_cwEscHtml(intake.scope)}</span>`,
+    `<span style="color:var(--m-muted);">Format</span><span>${_cwEscHtml(intake.format)}</span>`,
+    `<span style="color:var(--m-muted);">Tone</span><span>${_cwEscHtml(intake.tone)}</span>`,
+    `<span style="color:var(--m-muted);">Module length</span><span>${_cwEscHtml(intake.module_length)}</span>`,
+  ];
+  if (intake.includes.length) {
+    lines.push(`<span style="color:var(--m-muted);">Include</span><span>${intake.includes.map(i => _cwEscHtml(i.replace(/-/g, ' '))).join(', ')}</span>`);
+  }
+  lines.push('</div>');
+  if (intake.key_questions?.trim()) {
+    lines.push(`<div style="margin-top:10px;"><span style="color:var(--m-muted);font-size:12px;">KEY QUESTIONS</span><div style="font-size:13px;white-space:pre-line;">${_cwEscHtml(intake.key_questions.trim())}</div></div>`);
+  }
+  if (intake.out_of_scope?.trim()) {
+    lines.push(`<div style="margin-top:8px;"><span style="color:var(--m-muted);font-size:12px;">OUT OF SCOPE</span><div style="font-size:13px;">${_cwEscHtml(intake.out_of_scope.trim())}</div></div>`);
+  }
+  document.getElementById('cw-summary-content').innerHTML = lines.join('\n');
+}
+
+async function cwSubmit() {
+  const title = document.getElementById('cw-title').value.trim();
+  const slug = document.getElementById('cw-slug').value.trim();
+  const intake = _cwGatherIntake();
+  const submitBtn = document.getElementById('cw-btn-submit');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Starting…';
+
+  try {
+    const res = await fetch('/api/course/build-with-intake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, title, intake }),
+    });
+    const data = await res.json();
+
+    if (data.status === 'error') {
+      showToast(`<i class="bi bi-exclamation-circle toast-icon"></i>${data.message || 'Build failed.'}`);
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Start Build in Claude';
+      return;
+    }
+
+    // Copy prompt and launch Claude Desktop
+    if (data.prompt) {
+      await navigator.clipboard.writeText(data.prompt).catch(() => {});
+      await _launchClaudeDesktop();
+    }
+
+    // Transition to confirmation view
+    document.getElementById('cw-review-view').style.display = 'none';
+    document.getElementById('cw-confirm-view').style.display = '';
+    document.getElementById('cw-btn-submit').style.display = 'none';
+    document.getElementById('cw-btn-back').style.display = 'none';
+    document.getElementById('cw-btn-close').style.display = '';
+
+    showToast(`<i class="bi bi-clipboard-check toast-icon"></i>Claude Desktop opening — paste prompt to build <strong>${_cwEscHtml(data.title)}</strong>`);
+
+    // Reload dashboard sections
+    const archiveEl = document.querySelector('[hx-get="/api/partial/learning/courses-archive"]');
+    if (archiveEl && window.htmx) htmx.trigger(archiveEl, 'load');
+    const ideasEl = document.querySelector('[hx-get="/api/partial/learning/placeholder-courses"]');
+    if (ideasEl && window.htmx) htmx.trigger(ideasEl, 'load');
+
+  } catch (e) {
+    showToast("<i class=\"bi bi-exclamation-circle toast-icon\"></i>I couldn't start the build — try again.");
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Start Build in Claude';
+  }
+}
+
+function toggleQuestionPanel(btn, slug, title) {
+  const card = btn.closest('.course-card');
+  if (!card) return;
+  const panel = card.querySelector('.course-question-panel');
+  if (!panel) return;
+  const visible = panel.style.display !== 'none';
+  panel.style.display = visible ? 'none' : 'block';
+  if (!visible) panel.querySelector('textarea')?.focus();
+}
+
+async function launchWithQuestion(btn, slug, title) {
+  const panel = btn.closest('.course-question-panel');
+  const question = panel?.querySelector('.question-input')?.value?.trim() || '';
+  if (!question) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Please enter a research question first');
+    return;
+  }
+  try {
+    const data = await _fetchBuildIdeaPrompt(slug, title, true, title, question);
+    if (data.prompt) {
+      await navigator.clipboard.writeText(data.prompt).catch(() => {});
+      await _launchClaudeDesktop();
+      showToast(`<i class="bi bi-clipboard-check toast-icon"></i>Claude Desktop opening — prompt includes your research question`);
+    }
+  } catch (e) {
+    showToast("<i class=\"bi bi-exclamation-circle toast-icon\"></i>I couldn't prepare the prompt — try again.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// News category filter
+// ---------------------------------------------------------------------------
+
+function filterNewsCategory(btn, category) {
+  document.querySelectorAll('.news-cat-chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  const url = category
+    ? `/api/partial/today/news-rail?category=${encodeURIComponent(category)}`
+    : '/api/partial/today/news-rail';
+  fetch(url)
+    .then(r => r.text())
+    .then(html => {
+      // Find the news-rail container and replace its innerHTML (or replace the
+      // whole div)
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      const newRail = tmp.firstElementChild;
+      const current = document.querySelector('.today-news-rail');
+      if (current && newRail) current.replaceWith(newRail);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Project detail overlay — full project panel with all tasks + history
+// ---------------------------------------------------------------------------
+
+/* The peek panel. It already slid in from the right; what it never did was
+   hand the keyboard anywhere, so opening it left focus on the row behind an
+   overlay the user could not tab into, and closing it dropped focus to the top
+   of the document — losing your place in a list of sixteen, which is the exact
+   thing a peek exists to preserve. */
+let _peekReturnTo = null;
+
+function openProjectDetail(projectId) {
+  const existing = document.getElementById('proj-detail-overlay');
+  if (existing) existing.remove();
+  _peekReturnTo = document.activeElement;      // come back here on close
+  htmx.ajax('GET', '/api/partial/work/project-detail/' + projectId, {
+    target: document.body,
+    swap: 'beforeend',
+  }).then(function () {
+    const panel = document.querySelector('#proj-detail-overlay .proj-detail-panel');
+    if (!panel) return;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('tabindex', '-1');
+    panel.focus({ preventScroll: true });
+  });
+}
+
+function closeProjectDetail() {
+  const el = document.getElementById('proj-detail-overlay');
+  if (!el) return;
+  el.remove();
+  // Return focus to the row that opened it, if it is still in the document —
+  // an HTMX swap may have replaced the list while the panel was open.
+  if (_peekReturnTo && document.contains(_peekReturnTo)) {
+    _peekReturnTo.focus({ preventScroll: true });
+  }
+  _peekReturnTo = null;
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeProjectDetail();
+});
+
+// ---------------------------------------------------------------------------
+// Project editing — rename, tags, category, banner colour
+// (the project-detail template calls these; they POST then refresh the panel)
+// ---------------------------------------------------------------------------
+
+function reloadProjectDetail(projectId) {
+  htmx.ajax('GET', '/api/partial/work/project-detail/' + projectId, {
+    target: '#proj-detail-overlay', swap: 'outerHTML',
+  });
+}
+
+function reloadProjectsZone() {
+  const z = document.getElementById('projects-zone');
+  if (z && window.htmx) htmx.trigger(z, 'load');
+}
+
+async function _projectUpdate(projectId, fields) {
+  const res = await fetch('/api/project/update/' + projectId, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  });
+  return res.ok;
+}
+
+// — Rename (inline) —
+function pdStartRename(projectId) {
+  const h = document.getElementById('pd-title-display-' + projectId);
+  const inp = document.getElementById('pd-title-input-' + projectId);
+  if (!h || !inp) return;
+  inp.value = h.textContent.trim();
+  h.style.display = 'none';
+  inp.style.display = 'block';
+  inp.focus();
+  inp.select();
+}
+function pdCancelRename(projectId) {
+  const h = document.getElementById('pd-title-display-' + projectId);
+  const inp = document.getElementById('pd-title-input-' + projectId);
+  if (inp) inp.style.display = 'none';
+  if (h) h.style.display = 'block';
+}
+async function pdSaveRename(projectId) {
+  const inp = document.getElementById('pd-title-input-' + projectId);
+  if (!inp) return;
+  const newTitle = inp.value.trim();
+  const h = document.getElementById('pd-title-display-' + projectId);
+  if (!newTitle || (h && newTitle === h.textContent.trim())) { pdCancelRename(projectId); return; }
+  const ok = await _projectUpdate(projectId, { title: newTitle });
+  if (ok) {
+    if (h) h.textContent = newTitle;
+    pdCancelRename(projectId);
+    showToast('<i class="bi bi-check2 toast-icon"></i>Project renamed');
+    reloadProjectsZone();
+  } else {
+    showToast("<i class=\"bi bi-exclamation-circle toast-icon\"></i>Couldn't rename — try again");
+    pdCancelRename(projectId);
+  }
+}
+
+// — Tags (multiple per project) —
+async function pdAddTagPrompt(projectId) {
+  const tag = (prompt('Add a tag:') || '').trim();
+  if (!tag) return;
+  const res = await fetch('/api/project/' + projectId + '/tag-add', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag }),
+  });
+  if (res.ok) { reloadProjectDetail(projectId); reloadProjectsZone(); }
+}
+async function pdRemoveTag(projectId, tag) {
+  const res = await fetch('/api/project/' + projectId + '/tag-remove', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag }),
+  });
+  if (res.ok) { reloadProjectDetail(projectId); reloadProjectsZone(); }
+}
+
+// — Next step —
+async function pdClearNextStep(projectId) {
+  const res = await fetch('/api/project/' + projectId + '/clear-next-step', { method: 'POST' });
+  if (res.ok) { reloadProjectDetail(projectId); showToast('<i class="bi bi-check2 toast-icon"></i>Next step cleared'); }
+}
+
+// — Banner colour —
+async function pdSetColor(projectId, color) {
+  const ok = await _projectUpdate(projectId, { accent_color: color });
+  if (ok) { reloadProjectDetail(projectId); reloadProjectsZone(); }
+}
+
+// — Category (choose existing or add new) —
+async function pdSetCategory(projectId) {
+  let existing = [];
+  try {
+    const r = await fetch('/api/project/categories');
+    existing = (await r.json()).categories || [];
+  } catch (e) { /* ignore */ }
+  const hint = existing.length ? '\nExisting: ' + existing.join(', ') : '';
+  const cat = (prompt('Category for this project (type a new one or reuse):' + hint) || '').trim();
+  if (cat === '') return;
+  const ok = await _projectUpdate(projectId, { category: cat });
+  if (ok) {
+    reloadProjectDetail(projectId);
+    reloadProjectsZone();
+    const fb = document.querySelector('[hx-get="/api/partial/work/category-filters"]');
+    if (fb && window.htmx) htmx.trigger(fb, 'load');
+    showToast('<i class="bi bi-check2 toast-icon"></i>Category set to ' + cat);
+  }
+}
+
+// — Work tab filter chips —
+// These are controls (.chip-btn), not badges. `aria-pressed` is kept in step with
+// the visual state: without it the only signal that a filter is active is a
+// border, which a screen reader does not report.
+function filterProjects(value, btn) {
+  document.querySelectorAll('.work-filter-chip').forEach(function (c) {
+    c.classList.remove('chip-btn--on');
+    c.setAttribute('aria-pressed', 'false');
+  });
+  if (btn) { btn.classList.add('chip-btn--on'); btn.setAttribute('aria-pressed', 'true'); }
+  const f = encodeURIComponent(value || '');
+  htmx.ajax('GET', '/api/partial/work/projects?filter=' + f, {
+    target: '#projects-zone', swap: 'innerHTML',
+  });
+  // THE FILTER NOW NARROWS THE BOARD TOO (2026-09-03). It only ever filtered
+  // the project list, so filtering to one category left a status board still
+  // showing every task in the system — half the page answering a different
+  // question from the other half. The board reads the same filter server-side.
+  const zone = document.getElementById('kanban-zone');
+  if (zone) {
+    htmx.ajax('GET', '/api/partial/work/kanban?filter=' + f,
+              { target: '#kanban-zone', swap: 'innerHTML' });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Project categories — create, rename, merge, remove, reorder, and re-file
+// ---------------------------------------------------------------------------
+// These existed as strings discovered with SELECT DISTINCT, which is enough to
+// filter by and not enough to own. `/api/project/update` has always accepted a
+// category and nothing exposed it, so the only way to re-file a project was to
+// edit the database by hand.
+//
+// Every call reloads the projects zone rather than patching the DOM: a rename
+// changes headings, a merge removes a whole section, and re-filing moves a card
+// between two of them. Re-rendering the group is simpler than three bespoke
+// mutations, and it cannot drift from the server's idea of the order.
+
+function _catReload() {
+  const on = document.querySelector('.work-filter-chip.chip-btn--on');
+  const f = on ? (on.dataset.filter || '') : '';
+  htmx.ajax('GET', '/api/partial/work/projects?filter=' + encodeURIComponent(f), {
+    target: '#projects-zone', swap: 'innerHTML',
+  });
+}
+
+async function _catPost(path, body) {
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') {
+      // The server's own sentence, in a toast — never a modal browser dialog.
+      // Every one of these refusals is a thing the reader did on purpose, so it
+      // has to say what to do instead, and it should not seize the window to do
+      // it. (The persona linter forbids the blocking kind; note it also matches
+      // the word inside a comment, so do not name it here.)
+      showToast('<i class="bi bi-exclamation-triangle toast-icon"></i>' +
+                (data.message || 'That did not work.'));
+      return null;
+    }
+    _catReload();
+    return data;
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' +
+              'Could not reach Metis — the change was not saved.');
+    return null;
+  }
+}
+
+function catCreate() {
+  const name = prompt('Name the new category:');
+  if (name && name.trim()) _catPost('/api/project-category/create', { name: name.trim() });
+}
+
+function catReorder(name, direction) {
+  _catPost('/api/project-category/reorder', { name: name, direction: direction });
+}
+
+function catManage(name, nProjects) {
+  const held = nProjects === 1 ? '1 project' : nProjects + ' projects';
+  const what = prompt(
+    'Category “' + name + '” — ' + held + '.\n\n' +
+    'Type:\n' +
+    '  a new name      to rename it\n' +
+    '  merge <target>  to move its projects into another category\n' +
+    '  remove          to delete it (its projects become uncategorised)\n',
+    ''
+  );
+  if (!what) return;
+  const v = what.trim();
+  if (!v) return;
+
+  if (v.toLowerCase() === 'remove') {
+    const warn = nProjects
+      ? 'Remove “' + name + '”? Its ' + held + ' will become uncategorised — nothing is deleted.'
+      : 'Remove the empty category “' + name + '”?';
+    if (confirm(warn)) _catPost('/api/project-category/delete', { name: name });
+    return;
+  }
+  if (v.toLowerCase().startsWith('merge ')) {
+    const into = v.slice(6).trim();
+    if (!into) {
+      showToast('<i class="bi bi-exclamation-triangle toast-icon"></i>' +
+                'Name the category to merge into — for example: merge Methodology');
+      return;
+    }
+    if (confirm('Move the ' + held + ' in “' + name + '” into “' + into + '”, then remove “' + name + '”?')) {
+      _catPost('/api/project-category/merge', { from: name, into: into });
+    }
+    return;
+  }
+  _catPost('/api/project-category/rename', { from: name, to: v });
+}
+
+// ── WHERE DOES THIS LIVE? ────────────────────────────────────────────────────
+// The control that did not exist. `external_path` was only ever settable while
+// creating a project, so seven active projects had no folder and nothing on the
+// page could give them one — while the launcher row went on offering to open it.
+//
+// Reuses `_catPost`, so a refusal arrives as the server's own sentence in a
+// toast and the card group re-renders on success. That matters here because
+// setting a path CHANGES WHICH LAUNCHERS ARE OFFERED, and a row that still
+// advertises the old answer is the defect this whole change is about.
+async function projSetPath(projectId, title) {
+  let current = '';
+  try {
+    const res = await fetch('/api/project/' + encodeURIComponent(projectId) + '/launch-state');
+    const data = await res.json();
+    current = (data && data.path) || '';
+  } catch (e) { /* the prompt still works empty */ }
+
+  const target = prompt(
+    'Which folder holds ' + (title ? '“' + title + '”' : 'this project') + '?\n\n' +
+    'Paste the address from the folder window — either form works:\n' +
+    '    C:\\Users\\you\\Documents\\ProjectName\n' +
+    '    /mnt/c/Users/you/Documents/ProjectName\n\n' +
+    'Leave it blank to say this project has no folder.',
+    current
+  );
+  if (target === null) return;   // cancelled; blank is a deliberate answer
+  await _catPost('/api/project/' + encodeURIComponent(projectId) + '/set-path',
+                 { path: target.trim() });
+}
+
+async function projMoveCategory(projectId, current) {
+  let names = [];
+  try {
+    const res = await fetch('/api/project-category/list');
+    const data = await res.json();
+    names = (data.categories || []).map(function (c) { return c.name; });
+  } catch (e) { /* fall through — a typed name still works */ }
+
+  const listed = names.length ? '\n\nExisting: ' + names.join(' · ') : '';
+  const target = prompt(
+    'Move this project to which category?' + listed +
+    '\n\nType a new name to create one, or leave blank to uncategorise.',
+    current || ''
+  );
+  if (target === null) return;   // cancelled — blank is a real choice
+  _catPost('/api/project/' + encodeURIComponent(projectId) + '/move-category',
+           { category: target.trim() });
+}
+
+// ---------------------------------------------------------------------------
+// Project launcher — open external app (VS Code / RStudio / Claude Code)
+// ---------------------------------------------------------------------------
+
+async function launchProjectTarget(projectId, target) {
+  try {
+    const body = new URLSearchParams({ project_id: projectId, target: target });
+    const res = await fetch('/api/project/launch', { method: 'POST', body });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(`<i class="bi bi-box-arrow-up-right toast-icon"></i>Launched ${target} → ${data.path}`);
+    } else if (data.status === 'starting') {
+      showToast(`<i class="bi bi-hourglass-split toast-icon"></i>${data.message || 'Starting…'}`);
+    } else {
+      showToast(`<i class="bi bi-exclamation-triangle"></i>${data.message || 'Launch failed'}`);
+    }
+  } catch (e) {
+    showToast(`<i class="bi bi-exclamation-triangle"></i>Launch failed: ${e}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// News summary modal
+// ---------------------------------------------------------------------------
+
+function openNewsSummary(briefId) {
+  const host = document.getElementById('news-modal-host') || document.body;
+  fetch(`/api/news/brief/${briefId}`)
+    .then(r => r.text())
+    .then(html => {
+      host.innerHTML = html;
+    })
+    .catch(() => showToast("I couldn't load that news item — refresh the page if it keeps happening."));
+}
+
+function closeNewsModal(event) {
+  // if event passed, only close when clicking the backdrop
+  if (event && event.target !== event.currentTarget) return;
+  const host = document.getElementById('news-modal-host');
+  if (host) host.innerHTML = '';
+}
+
+// ---------------------------------------------------------------------------
+// Task actions (work tab)
+// ---------------------------------------------------------------------------
+
+async function markTaskDone(taskId, btn) {
+  try {
+    const res = await fetch(`/api/task/${taskId}/done`, { method: 'POST' });
+    if (!res.ok) throw new Error();
+    const row = btn.closest('.list-group-item, tr, .task-row, .todo-row, [data-task-id]');
+    if (row) {
+      row.style.opacity = '0.4';
+      row.style.textDecoration = 'line-through';
+      row.style.pointerEvents = 'none';
+      setTimeout(() => row.remove(), 500);
+    }
+    showToast('Task marked done — nice work.');
+  } catch {
+    showToast("I couldn't update that task — try again.");
+  }
+}
+
+async function deleteTask(taskId, btn) {
+  if (!confirm('Delete this task?')) return;
+  try {
+    const res = await fetch(`/api/task/${taskId}/delete`, { method: 'POST' });
+    if (!res.ok) throw new Error();
+    const row = btn.closest('.list-group-item, tr, .task-row');
+    if (row) row.remove();
+    showToast('Task deleted');
+  } catch {
+    showToast("I couldn't delete task");
+  }
+}
+
+async function markProjectTaskDone(taskId, projectId) {
+  try {
+    const res = await fetch(`/api/task/${taskId}/done`, { method: 'POST' });
+    if (!res.ok) throw new Error();
+    await _refreshProjectTasks(projectId);
+    showToast('Task done ✓');
+  } catch {
+    showToast("I couldn't update that task — try again.");
+  }
+}
+
+async function submitQuickTask(projectId) {
+  const titleEl = document.getElementById(`task-title-${projectId}`);
+  const catEl   = document.getElementById(`task-cat-${projectId}`);
+  const title   = titleEl ? titleEl.value.trim() : '';
+  if (!title) { if (titleEl) titleEl.focus(); return; }
+  const category = catEl ? catEl.value : 'general';
+  try {
+    const res = await fetch('/api/task/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, title, category }),
+    });
+    if (!res.ok) throw new Error();
+    const html = await res.text();
+    const target = document.getElementById(`proj-tasks-${projectId}`);
+    if (target) target.innerHTML = html;
+    if (titleEl) titleEl.value = '';
+    document.getElementById(`task-add-${projectId}`).style.display = 'none';
+    showToast('Task added');
+  } catch {
+    showToast("I couldn't add that task — try again.");
+  }
+}
+
+async function _refreshProjectTasks(projectId) {
+  const res = await fetch(`/api/partial/work/project-tasks/${projectId}`);
+  if (!res.ok) return;
+  const html = await res.text();
+  const target = document.getElementById(`proj-tasks-${projectId}`);
+  if (target) target.innerHTML = html;
+}
+
+async function miniTaskStar(taskId, projectId, btn) {
+  const res = await fetch(`/api/task/${taskId}/star`, { method: 'POST' });
+  const data = await res.json();
+  const starColor = data.starred ? 'var(--m-ochre-deep,#b36a1d)' : 'var(--m-muted)';
+  if (btn) { btn.style.color = starColor; btn.style.opacity = data.starred ? '1' : '0.4'; btn.title = data.starred ? 'Unstar' : 'Star (appears in Today)'; }
+  showToast(data.starred ? 'Task starred — will appear in Today' : 'Task unstarred');
+}
+
+async function miniTaskDelete(taskId, projectId) {
+  if (!confirm('Delete this task?')) return;
+  await fetch(`/api/task/${taskId}/delete`, { method: 'POST' });
+  await _refreshProjectTasks(projectId);
+}
+
+async function toggleProjectNotes(projectId) {
+  const panel = document.getElementById(`proj-notes-${projectId}`);
+  if (!panel) return;
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+    return;
+  }
+  if (!panel.dataset.loaded) {
+    const res = await fetch(`/api/project/${projectId}/notes`);
+    panel.innerHTML = await res.text();
+    panel.dataset.loaded = '1';
+  }
+  panel.style.display = '';
+}
+
+async function saveProjectNotes(projectId) {
+  const area = document.getElementById(`notes-area-${projectId}`);
+  if (!area) return;
+  try {
+    await fetch(`/api/project/${projectId}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: area.value }),
+    });
+    const indicator = document.getElementById(`notes-saved-${projectId}`);
+    if (indicator) { indicator.textContent = 'SAVED'; setTimeout(() => indicator.textContent = '', 2000); }
+  } catch {
+    showToast("I couldn't save notes");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add Project modal
+// ---------------------------------------------------------------------------
+
+function openAddProjectModal() {
+  const overlay = document.getElementById('add-project-overlay');
+  if (!overlay) return;
+  overlay.style.display = 'flex';
+  npGoStep1();
+  setTimeout(() => document.getElementById('np-path')?.focus(), 80);
+}
+
+function closeAddProjectModal() {
+  const overlay = document.getElementById('add-project-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function npGoStep1() {
+  document.getElementById('np-step-1').style.display = '';
+  document.getElementById('np-step-2').style.display = 'none';
+  document.getElementById('np-step-title').textContent = 'Add Project — Where is it?';
+  document.getElementById('np-step-dot-1').style.background = 'var(--m-accent)';
+  document.getElementById('np-step-dot-2').style.background = 'var(--m-rule)';
+}
+
+function npGoStep2() {
+  const title = (document.getElementById('np-title')?.value || '').trim();
+  if (!title) { document.getElementById('np-title').focus(); return; }
+  document.getElementById('np-step-1').style.display = 'none';
+  document.getElementById('np-step-2').style.display = '';
+  document.getElementById('np-step-title').textContent = 'Add Project — Tell me more';
+  document.getElementById('np-step-dot-1').style.background = 'var(--m-rule)';
+  document.getElementById('np-step-dot-2').style.background = 'var(--m-accent)';
+  setTimeout(() => document.getElementById('np-desc')?.focus(), 80);
+}
+
+function npAutoTitle() {
+  const path = (document.getElementById('np-path')?.value || '').trim();
+  if (!path) return;
+  const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
+  const last = parts[parts.length - 1] || '';
+  const titleEl = document.getElementById('np-title');
+  if (titleEl && !titleEl.value) {
+    titleEl.value = last.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+}
+
+async function submitAddProject() {
+  const title = (document.getElementById('np-title')?.value || '').trim();
+  if (!title) { npGoStep1(); document.getElementById('np-title').focus(); return; }
+  const launcher = document.querySelector('input[name="np-launcher"]:checked')?.value || 'vscode';
+  const typeMap = {
+    vscode:   ['vscode', 'claude_code', 'claude_desktop', 'explorer'],
+    rstudio:  ['rstudio', 'claude_code', 'claude_desktop', 'explorer'],
+    explorer: ['explorer', 'claude_code', 'claude_desktop'],
+    none:     ['claude_code', 'claude_desktop'],
+  };
+  const payload = {
+    title,
+    description:   document.getElementById('np-desc')?.value || '',
+    external_path: document.getElementById('np-path')?.value || '',
+    github_url:    document.getElementById('np-github')?.value || '',
+    launcher_type: launcher,
+    launchers:     typeMap[launcher] || typeMap.vscode,
+  };
+  try {
+    const res = await fetch('/api/project/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message);
+
+    // Seed tasks from textarea
+    const taskLines = (document.getElementById('np-tasks')?.value || '')
+      .split('\n').map(l => l.trim()).filter(Boolean);
+    for (const line of taskLines) {
+      await fetch('/api/task/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: line, project_id: data.project_id }),
+      }).catch(() => {});
+    }
+
+    closeAddProjectModal();
+    htmx.ajax('GET', '/api/partial/work/projects', { target: '#projects-zone', swap: 'innerHTML' });
+    showToast(`Project "${data.title}" created`);
+    ['np-title','np-desc','np-path','np-tasks','np-github'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
+  } catch(e) {
+    showToast("I couldn't create that project: " + (e.message || 'unknown error'));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tune scan — open feed allowlist modal
+// ---------------------------------------------------------------------------
+
+const _TUNE_SCAN_FEEDS = [
+  { name: 'WHO outbreak news',     tags: 'Outbreaks · Public health' },
+  { name: 'CDC EID journal',       tags: 'Methods · Public health' },
+  { name: 'medRxiv',               tags: 'Preprints · Methods' },
+  { name: 'Anthropic News',        tags: 'AI' },
+];
+
+function tuneScan() { openTuneScan(); }
+
+function openTuneScan() {
+  let overlay = document.getElementById('tune-scan-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'tune-scan-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) closeTuneScan(); };
+    document.body.appendChild(overlay);
+  }
+  const feeds = _TUNE_SCAN_FEEDS.map(f => `
+    <div class="tune-scan-feed">
+      <div>
+        <div class="tune-scan-feed-name">${f.name}</div>
+        <div class="tune-scan-feed-tags">${f.tags}</div>
+      </div>
+      <span class="chip chip--ok">ON</span>
+    </div>`).join('');
+  overlay.innerHTML = `
+    <div class="tune-scan-card" onclick="event.stopPropagation()">
+      <div class="kicker kicker--accent" style="margin-bottom:10px;">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><line x1="8" y1="3" x2="8" y2="5"/><line x1="8" y1="11" x2="8" y2="13"/><line x1="3" y1="8" x2="5" y2="8"/><line x1="11" y1="8" x2="13" y2="8"/></svg>
+        <span>SCAN SETTINGS</span>
+      </div>
+      <h2>What's listening</h2>
+      <p class="ed" style="font-size:14px;color:var(--m-muted);margin:0 0 14px;">
+        Sources currently in the allowlist. Editing the list lives in <code>system/mcp-server/src/metis_mcp/tools/content_scan.py</code> — I'll wire an in-app editor in a later phase.
+      </p>
+      ${feeds}
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;padding-top:14px;border-top:1px solid var(--m-rule);">
+        <button class="btn btn--ghost btn--caps" onclick="closeTuneScan()">Close</button>
+        <button class="btn btn--primary" onclick="closeTuneScan();runContentScan({target:document.body});">Scan now</button>
+      </div>
+    </div>`;
+  overlay.classList.add('open');
+}
+
+function closeTuneScan() {
+  const overlay = document.getElementById('tune-scan-overlay');
+  if (overlay) overlay.classList.remove('open');
+}
+
+// ---------------------------------------------------------------------------
+// Thinking tab — Brainstorm + Export-as-note
+// ---------------------------------------------------------------------------
+
+// Brainstorm creativity level (set by the dial in the Reflection tab)
+let _bsCreativity = 'balanced';
+function setCreativity(el) {
+  _bsCreativity = el.dataset.creativity || 'balanced';
+  el.parentElement.querySelectorAll('.bs-seg').forEach(b => {
+    const on = (b === el);
+    b.style.background = on ? 'var(--m-accent)' : 'transparent';
+    b.style.color = on ? '#fff' : 'var(--m-muted)';
+  });
+}
+
+// Open Claude Desktop with a pre-filled prompt via the claude:// deep link
+// (same mechanism the brief's "Update with Claude" uses). Clipboard is a safety
+// net in case the protocol handler isn't registered.
+function _openInClaude(prompt) {
+  try { navigator.clipboard?.writeText(prompt); } catch { /* noop */ }
+  try { window.location.href = 'claude://claude.ai/new?q=' + encodeURIComponent(prompt); } catch { /* noop */ }
+}
+
+function _creativityGuide(level) {
+  return {
+    grounded: 'Creativity: GROUNDED — stay practical and close to the evidence; prioritise feasible, well-supported connections.',
+    balanced: 'Creativity: BALANCED — mix solid, grounded connections with a few non-obvious ones.',
+    bold:     'Creativity: BOLD — push for surprising, divergent, cross-disciplinary connections; take risks I can prune later.',
+  }[level] || 'Creativity: BALANCED.';
+}
+
+// Build a primed brainstorm prompt for a given scope. The prompt tells Claude
+// (which has the Metis MCP tools connected) to pull the user's own context first.
+function _brainstormPrompt(level, mode, extra) {
+  let task;
+  switch (mode) {
+    case 'work':
+      task = "Brainstorm about my current active project/work. First pull its context with your Metis tools — its tasks, notes, meeting decisions, related ideas and the most relevant items from my library.";
+      break;
+    case 'topic':
+      task = `I want to brainstorm specifically about: "${extra}". Use your Metis tools to pull anything in my own work (projects, notes, ideas, library) that connects to it, and ground the brainstorm there.`;
+      break;
+    case 'mindmap':
+      task = "Build a mindmap of my thinking. Use your Metis tools to read my open ideas, notes and projects, cluster them into themes, and lay out how they connect. Present it as a mindmap I can save to my Reflection tab.";
+      break;
+    case 'cluster':
+      task = "Cluster my open ideas into a few coherent themes. Read my ideas, notes and projects with your Metis tools first, then group them, name each cluster, and note the cross-links between them.";
+      break;
+    default:
+      task = "First pull my current context with your Metis tools — active projects, recent notes, open ideas, meeting decisions and the most relevant library items — then brainstorm with me.";
+  }
+  return [
+    "Metis — let's brainstorm.",
+    _creativityGuide(level),
+    task,
+    "Bring in relevant external sources where they help, and brainstorm in your usual voice — surface connections I might have missed across my work. When we're done, offer to save the session and generate a mindmap in my Reflection tab.",
+  ].join('\n\n');
+}
+
+// Scope: 'open' | 'work' | 'topic' | 'mindmap' | 'cluster'
+function launchBrainstorm(mode) {
+  mode = mode || 'open';
+  let extra = '';
+  if (mode === 'topic') {
+    extra = (window.prompt('Brainstorm about which topic?') || '').trim();
+    if (!extra) return;
+  }
+  const level = (typeof _bsCreativity !== 'undefined') ? _bsCreativity : 'balanced';
+  _openInClaude(_brainstormPrompt(level, mode, extra));
+  const label = mode === 'open' ? '' : ' · ' + mode;
+  showToast(`<i class="bi bi-lightbulb toast-icon"></i>Brainstorm (${level}${label}) — opening Claude Desktop`);
+}
+
+// Brainstorm straight from today's brief — copies the prompt AND opens Claude.
+function brainstormFromBrief() {
+  const prompt = [
+    "Metis — let's brainstorm from today's brief.",
+    "First call get_daily_insight to read today's brief, then use your other Metis tools to pull the projects, notes, ideas and meeting decisions it connects.",
+    "Bring in relevant external sources where useful, and brainstorm with me — surface non-obvious connections across my work and concrete next steps.",
+    "When we're done, offer to save the session and generate a mindmap in my Reflection tab.",
+  ].join('\n\n');
+  _openInClaude(prompt);
+  showToast("<i class=\"bi bi-lightbulb toast-icon\"></i>Brainstorming from today's brief — Claude Desktop opening; prompt copied (paste into a Temporary chat if you like)");
+}
+
+// Hand Metis's own self-improvement loop to Claude (OODA over the reflexions).
+// Claude Code is recommended — that's where /metis-self-reflexion runs — but the
+// prompt is self-contained and works in Desktop too.
+function improveMetisOODA() {
+  const prompt = [
+    "Metis — run a self-improvement cycle (OODA) on yourself.",
+    "OBSERVE: read my recent reflexions and session signals with your Metis tools — the reflexion log (went-well / could-improve / tool-wishes) and recent agent runs.",
+    "ORIENT: cluster them into 2–3 themes — what keeps going well, what keeps falling short, and which tools are missing.",
+    "DECIDE: in plan mode, propose concrete, minimal improvements to the relevant agents/skills. Ask me before any structural change.",
+    "ACT: once I approve, draft the improvement proposals and apply the safe ones.",
+    "If you're in Claude Code, you can run /metis-self-reflexion for the full audit.",
+  ].join('\n\n');
+  _openInClaude(prompt);
+  showToast('<i class="bi bi-arrow-repeat toast-icon"></i>Improve Metis — opening Claude (Code recommended); OODA prompt is on the clipboard');
+}
+
+async function exportIdeaAsNote() {
+  try {
+    const res = await fetch('/api/note/from-latest-idea', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(`<i class="bi bi-journal-arrow-down toast-icon"></i>Idea exported as note · "${(data.preview || '').slice(0, 60)}…"`);
+      // Refresh the panels the note actually landed in. These selectors used to
+      // name two panels that the Reflection rebuild removed, so the refresh was
+      // a silent no-op and the new note only appeared on the next page load —
+      // the same dead-selector failure that left a layer of project-card
+      // controls inert. Refreshing by ID makes that visible: a missing element
+      // is a missing element, not a querySelectorAll returning nothing.
+      ['refl-journal', 'refl-ideas'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && window.htmx && htmx.trigger) htmx.trigger(el, 'load');
+      });
+    } else {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (data.message || 'Nothing to export.'));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Export failed — server offline?');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Graphify — build knowledge graph and open interactive view
+// ---------------------------------------------------------------------------
+
+async function graphifyKnowledge(btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⟳ Building graph…';
+  try {
+    const res = await fetch('/api/thinking/graphify-rebuild', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(
+        '<i class="bi bi-diagram-3 toast-icon"></i>Knowledge graph ready' +
+        (data.nodes ? ' · ' + data.nodes + ' nodes' : '') +
+        ' — opening in new tab'
+      );
+      if (data.has_html) {
+        window.open('/api/graphify/view', '_blank', 'noopener,noreferrer');
+      }
+      // Refresh the analytics panel
+      const panel = document.querySelector('[hx-get="/api/partial/thinking/graphify-analytics"]');
+      if (panel && window.htmx) htmx.trigger(panel, 'load');
+    } else {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Graph build failed: ' + (data.message || 'unknown error'));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Graph build failed — is the dashboard running?');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Planner — task status (Retire / Pause / Schedule)
+// ---------------------------------------------------------------------------
+
+async function setTaskStatus(action) {
+  // action: 'retire' | 'pause' | 'schedule'
+  try {
+    const res = await fetch('/api/task/oldest-open/' + action, { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(`<i class="bi bi-check2 toast-icon"></i>Task ${action}d`);
+      document.querySelectorAll('[hx-get="/api/partial/planner/notes"], [hx-get="/api/partial/planner/horizon"]').forEach(el => {
+        if (window.htmx && htmx.trigger) htmx.trigger(el, 'load');
+      });
+    } else {
+      showToast('<i class="bi bi-info-circle toast-icon"></i>' + (data.message || 'No matching task.'));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Action failed — server offline?');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Metis — model selector + identity stubs
+// ---------------------------------------------------------------------------
+
+async function setActiveModel(slug, btn) {
+  try {
+    const res = await fetch('/api/model/active', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug }),
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(`<i class="bi bi-check2 toast-icon"></i>Default model set to <b>${slug}</b>`);
+      // Visual update — reflect the choice on every model card (S.0b): highlight
+      // + button label, matching what the server now renders on load.
+      document.querySelectorAll('.panel[data-model]').forEach(card => {
+        const on = (card.dataset.model === slug);
+        card.classList.toggle('model-card-on', on);
+        const b = card.querySelector('.model-select-btn');
+        if (b) {
+          b.textContent = on ? '· SELECTED' : 'USE';
+          b.style.color = on ? 'var(--m-accent)' : 'var(--m-muted)';
+        }
+      });
+      // Fallback for any card without the data-model hook
+      if (!document.querySelector('.panel[data-model]')) {
+        document.querySelectorAll('.model-card-on').forEach(el => el.classList.remove('model-card-on'));
+        if (btn) btn.closest('.panel')?.classList.add('model-card-on');
+      }
+    } else {
+      showToast('<i class="bi bi-info-circle toast-icon"></i>' + (data.message || "I couldn't change the model — check that it's available."));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-info-circle toast-icon"></i>Note: setting saved locally only.');
+  }
+}
+
+function openMetisRename() {
+  const name = prompt('What should Metis call you?', '');
+  if (!name) return;
+  fetch('/api/identity/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  }).then(() => {
+    showToast(`<i class="bi bi-pencil toast-icon"></i>Saved — refresh to see "${name}" in greetings`);
+    document.querySelectorAll('[hx-get="/api/partial/metis/identity"]').forEach(el => {
+      if (window.htmx && htmx.trigger) htmx.trigger(el, 'load');
+    });
+  }).catch(() => showToast("<i class=\"bi bi-exclamation-circle toast-icon\"></i>I couldn't save."));
+}
+
+function openMetisKeys() {
+  showToast('<i class="bi bi-key toast-icon"></i>Keys live in <code>system/mcp-server/.env</code> — edit there. UI editor coming.');
+}
+
+function openMetisExport() {
+  showToast('<i class="bi bi-box-arrow-down toast-icon"></i>Run <code>/metis_handoff</code> in Claude Code to export the current archive.');
+}
+
+// ---------------------------------------------------------------------------
+// Identity edit modal — name, role, interests, news topics
+// ---------------------------------------------------------------------------
+
+function _readIdentityFromCard() {
+  const card = document.getElementById('metis-identity-card');
+  const data = { name: '', role: '', interests: [], news_topics: [] };
+  if (!card) return data;
+  const nm = card.querySelector('.metis-id-name');
+  if (nm) data.name = nm.textContent.trim();
+  const sub = card.querySelector('.metis-id-sub');
+  if (sub) data.role = sub.textContent.trim();
+  const blocks = card.querySelectorAll('.metis-id-block');
+  if (blocks.length >= 1) {
+    data.interests = Array.from(blocks[0].querySelectorAll('.metis-tag:not(.metis-tag--empty)'))
+      .map(function (t) { return t.textContent.trim(); });
+  }
+  if (blocks.length >= 2) {
+    data.news_topics = Array.from(blocks[1].querySelectorAll('.metis-tag:not(.metis-tag--empty)'))
+      .map(function (t) { return t.textContent.trim(); });
+  }
+  return data;
+}
+
+function openMetisIdentityEdit() {
+  const ov = document.getElementById('metis-identity-overlay');
+  if (!ov) return;
+  const cur = _readIdentityFromCard();
+  const f = function (id) { return document.getElementById(id); };
+  if (f('me-name'))      f('me-name').value = cur.name || '';
+  if (f('me-role'))      f('me-role').value = cur.role || '';
+  if (f('me-interests')) f('me-interests').value = (cur.interests || []).join(', ');
+  if (f('me-news'))      f('me-news').value = (cur.news_topics || []).join(', ');
+  ov.dataset.open = 'true';
+  setTimeout(function () { f('me-name')?.focus(); }, 60);
+}
+
+function closeMetisIdentityEdit() {
+  const ov = document.getElementById('metis-identity-overlay');
+  if (ov) ov.dataset.open = 'false';
+}
+
+async function saveMetisIdentity() {
+  const f = function (id) { return document.getElementById(id); };
+  const payload = {
+    name:        (f('me-name')?.value || '').trim(),
+    role:        (f('me-role')?.value || '').trim(),
+    interests:   (f('me-interests')?.value || '').trim(),
+    news_topics: (f('me-news')?.value || '').trim(),
+  };
+  try {
+    const res = await fetch('/api/identity/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast('<i class="bi bi-check2 toast-icon"></i>Identity saved.');
+      closeMetisIdentityEdit();
+      // Reload the identity card
+      const card = document.getElementById('metis-identity-card')?.parentElement;
+      if (card && window.htmx) htmx.ajax('GET', '/api/partial/metis/identity', { target: card, swap: 'innerHTML' });
+    } else {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (data.message || "I couldn't save."));
+    }
+  } catch (e) {
+    showToast("<i class=\"bi bi-exclamation-circle toast-icon\"></i>I couldn't save identity.");
+  }
+}
+
+// Close on Escape
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') {
+    const ov = document.getElementById('metis-identity-overlay');
+    if (ov && ov.dataset.open === 'true') closeMetisIdentityEdit();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Memory filter chips + archive setting
+// ---------------------------------------------------------------------------
+
+function filterMemoryStream(type, btn) {
+  // Toggle chip active state
+  document.querySelectorAll('#mem-filter-strip .mem-filter').forEach(function (el) {
+    el.dataset.active = (el === btn) ? 'true' : 'false';
+  });
+  // Update tail label
+  const tail = document.getElementById('memory-stream-tail');
+  if (tail) tail.textContent = (type === 'all') ? 'RECENT FIRST' : type.toUpperCase() + ' ONLY';
+  // Reload the memory stream with the filter
+  const target = document.getElementById('metis-memory-stream-body');
+  if (target && window.htmx) {
+    const url = '/api/partial/metis/memory-stream' + (type !== 'all' ? ('?type=' + encodeURIComponent(type)) : '');
+    htmx.ajax('GET', url, { target: target, swap: 'innerHTML' });
+  }
+}
+
+async function saveMemoryArchive(value) {
+  try {
+    const res = await fetch('/api/settings/memory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archive_days: parseInt(value, 10) }),
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      const label = (parseInt(value, 10) === 0) ? 'never archive' : (value + ' days');
+      showToast('<i class="bi bi-archive toast-icon"></i>Archive setting saved — ' + label + '.');
+    } else {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (data.message || "I couldn't save."));
+    }
+  } catch (e) {
+    showToast("<i class=\"bi bi-exclamation-circle toast-icon\"></i>I couldn't save archive setting.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Generic stub — copies a prompt to clipboard, shows toast
+// ---------------------------------------------------------------------------
+
+function metisStub(prompt, label) {
+  navigator.clipboard?.writeText(prompt).then(() => {
+    showToast(`<i class="bi bi-clipboard-check toast-icon"></i>Prompt copied — paste into Claude Code<br><code style="font-size:0.75rem;opacity:0.85;">${prompt}</code>`, 5500);
+  }).catch(() => showToast(`Use this prompt in Claude Code:<br><code>${prompt}</code>`, 5500));
+}
+
+// Meeting actions
+function openBriefing(meetingId)  { metisStub(`Open the briefing notes for meeting ${meetingId || 'next'}`); }
+function openTranscript(meetingId){ metisStub(`Show me the transcript for meeting ${meetingId || 'last'}`); }
+function rescheduleMeeting(id)    { showToast('<i class="bi bi-calendar2-event toast-icon"></i>Rescheduling lives in your calendar (Outlook/Google) — link coming.'); }
+
+// ---------------------------------------------------------------------------
+// Phase 8.13 — Handoff brief generator (callable from Today dateline strip)
+// ---------------------------------------------------------------------------
+
+async function generateHandoff() {
+  showToast('<i class="bi bi-pencil-square toast-icon"></i>Writing handoff brief…');
+  try {
+    const res = await fetch('/api/handoff/generate', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(
+        `<i class="bi bi-check2 toast-icon"></i>Handoff written → <code>${data.path || 'journal/'}</code><br>` +
+        `<span style="font-size:0.78rem;opacity:0.8;">${(data.runs_count || 0)} recent runs · ${(data.tokens_today || 0).toLocaleString()} tokens today</span>`,
+        6500
+      );
+    } else {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (data.message || 'Handoff failed.'));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Handoff failed — server offline?');
+  }
+}
+
+// Schedule daily morning brief via Windows Task Scheduler (one-off setup).
+async function scheduleMorningBrief() {
+  const proceed = window.confirm(
+    'Schedule a daily 7:00 AM scan?\n\n' +
+    'This registers two Windows Task Scheduler entries:\n' +
+    '  • Metis_NewsRadar — runs the news scan\n' +
+    '  • Metis_LibrarianScan — runs the literature scan\n\n' +
+    'You can change the time later via Task Scheduler. ' +
+    'You can also run /schedule from Claude Code for more control.'
+  );
+  if (!proceed) return;
+  showToast('<i class="bi bi-clock-history toast-icon"></i>Registering schedule…');
+  try {
+    const res = await fetch('/api/schedule/register-morning', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(
+        '<i class="bi bi-check2 toast-icon"></i>' +
+        (data.message || 'Morning brief scheduled. First run tomorrow at 7:00.'),
+        6500
+      );
+    } else {
+      showToast(
+        '<i class="bi bi-exclamation-circle toast-icon"></i>' +
+        (data.message || "I couldn't register schedule. Try /schedule from Claude Code."),
+        7000
+      );
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Schedule failed — server offline?');
+  }
+}
+
+// Run the metis_doctor self-test and surface results.
+async function runMetisDoctor() {
+  showToast('<i class="bi bi-stethoscope toast-icon"></i>Running diagnostics…');
+  try {
+    const res = await fetch('/api/doctor');
+    const data = await res.json();
+    if (data.status !== 'ok' && data.status !== 'warn' && data.status !== 'fail') {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Doctor failed: ' + (data.message || 'unknown error'));
+      return;
+    }
+    const lines = (data.checks || []).map(function (c) {
+      const icon = c.ok ? '✓' : (c.severity === 'warn' ? '⚠' : '✗');
+      return icon + ' ' + c.name + (c.detail ? ' — ' + c.detail : '');
+    });
+    // Doctor report is multi-line — render as a modal panel instead of an OS alert.
+    const reportHtml =
+      '<div style="font-family:var(--m-mono);font-size:11px;letter-spacing:0.12em;color:var(--m-accent);margin-bottom:10px;">METIS DOCTOR · ' +
+      (data.status || '?').toUpperCase() + '</div>' +
+      '<div style="font-family:var(--m-sans);font-size:13px;line-height:1.7;color:var(--m-ink);">' +
+      lines.map(l => '<div>' + l.replace(/</g,'&lt;') + '</div>').join('') +
+      '</div>' +
+      (data.summary ? '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--m-rule-soft);font-size:12px;color:var(--m-muted);">' + data.summary + '</div>' : '');
+    if (window.openModal) {
+      openModal(reportHtml, { title: 'Doctor report' });
+    } else if (window.showToast) {
+      showToast('Doctor: ' + (data.status || '?').toUpperCase() + ' — see console for details.');
+      console.log(reportHtml.replace(/<[^>]+>/g, ''));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Doctor unreachable.');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Self-improvement loop (Phase 9b)
+// ---------------------------------------------------------------------------
+
+async function draftImprovement(slug) {
+  if (!slug) return;
+  showToast('<i class="bi bi-lightbulb toast-icon"></i>Drafting self-improvement notes for <code>' + slug + '</code>…');
+  try {
+    const res = await fetch('/api/improvement/draft/' + encodeURIComponent(slug), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days: 14 }),
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast('<i class="bi bi-check2 toast-icon"></i>Draft #' + data.proposal_id + ' queued for ' + slug + '. Review below.', 5500);
+      htmx.trigger('#metis-improvement-body', 'refresh-improvement');
+      const el = document.getElementById('metis-improvement-body');
+      if (el) htmx.ajax('GET', '/api/partial/metis/improvement', { target: el, swap: 'innerHTML' });
+    } else {
+      showToast('<i class="bi bi-info-circle toast-icon"></i>' + (data.message || 'No reflexions yet.'), 5000);
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Draft failed.');
+  }
+}
+
+async function promoteProposal(pid) {
+  if (!pid) return;
+  try {
+    const res = await fetch('/api/improvement/promote/' + pid, { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast('<i class="bi bi-arrow-up-circle toast-icon"></i>Proposal #' + pid + ' promoted to pending.');
+      const el = document.getElementById('metis-improvement-body');
+      if (el) htmx.ajax('GET', '/api/partial/metis/improvement', { target: el, swap: 'innerHTML' });
+    } else {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (data.message || "I couldn't promote."));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Promotion failed.');
+  }
+}
+
+// Show the diff for a proposal in a modal-like prompt, then optionally apply.
+async function previewProposal(pid) {
+  if (!pid) return;
+  try {
+    const res = await fetch('/api/improvement/preview/' + pid);
+    const data = await res.json();
+    if (data.status !== 'ok') {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (data.message || "I couldn't load preview."));
+      return;
+    }
+    const summary =
+      'Proposal #' + data.proposal_id + ' for "' + data.agent_slug + '"\n' +
+      'Status: ' + data.proposal_status + '\n' +
+      '+' + data.added_lines + ' / -' + data.removed_lines + ' lines\n\n' +
+      (data.rationale ? 'Rationale:\n' + data.rationale + '\n\n' : '') +
+      'Diff (truncated to 4000 chars):\n\n' +
+      (data.diff || '(empty)').slice(0, 4000) + '\n\n' +
+      'Apply this change to the agent\'s skill.md? (OK = apply, Cancel = keep as-is)';
+    if (window.confirm(summary)) {
+      applyProposal(pid);
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Preview failed.');
+  }
+}
+
+// Apply: actually writes proposed_content to the agent's skill.md (with backup).
+async function applyProposal(pid) {
+  if (!pid) return;
+  try {
+    const res = await fetch('/api/improvement/apply/' + pid, { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(
+        '<i class="bi bi-check-circle toast-icon"></i>Applied to <code>' +
+        data.agent_slug + '/skill.md</code>. Backup at <code>' +
+        (data.backup_path || '').split('/').pop() + '</code>.',
+        6000
+      );
+      const el = document.getElementById('metis-improvement-body');
+      if (el) htmx.ajax('GET', '/api/partial/metis/improvement', { target: el, swap: 'innerHTML' });
+    } else {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (data.message || 'Apply failed.'));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Apply failed.');
+  }
+}
+
+async function rejectProposal(pid) {
+  if (!pid) return;
+  const note = window.prompt('Reason for rejecting #' + pid + '? (optional)') || '';
+  try {
+    const res = await fetch('/api/improvement/reject/' + pid, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast('<i class="bi bi-x-circle toast-icon"></i>Proposal #' + pid + ' rejected.');
+      const el = document.getElementById('metis-improvement-body');
+      if (el) htmx.ajax('GET', '/api/partial/metis/improvement', { target: el, swap: 'innerHTML' });
+    } else {
+      showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (data.message || "I couldn't reject."));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Rejection failed.');
+  }
+}
+
+// Teach actions (already partly defined below)
+function openHistory(id, title)   { metisStub(`Show me the build history for my course "${title}"`); }
+function continueDraft(id, title) { metisStub(`Continue building my course draft "${title}"`); }
+function publishCourse(id, title) { metisStub(`Publish my course "${title}"`); }
+function startBuildingSuggested() { metisStub('Build me a new course from the catalog'); }
+function viewCatalog()            { document.querySelector('.sec-label .tail')?.scrollIntoView({behavior:'smooth', block:'center'}); }
+
+// ---------------------------------------------------------------------------
+// Toast notification (reusable)
+// ---------------------------------------------------------------------------
+
+function showToast(html, duration = 4500) {
+  let t = document.getElementById('metis-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'metis-toast';
+    t.className = 'metis-toast';
+    document.body.appendChild(t);
+  }
+  t.innerHTML = html;
+  requestAnimationFrame(() => t.classList.add('show'));
+  clearTimeout(t._hideTimer);
+  t._hideTimer = setTimeout(() => {
+    t.classList.remove('show');
+  }, duration);
+}
+
+// Alias for legacy calls
+function _showToast(msg) { showToast(msg); }
+
+// ---------------------------------------------------------------------------
+// DB watcher — poll every 20s, show a reload notification when mtime changes
+// ---------------------------------------------------------------------------
+
+let lastDbMtime = null;
+
+async function checkDbMtime() {
+  try {
+    const res = await fetch('/api/check-db-mtime');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (lastDbMtime !== null && data.mtime > lastDbMtime) {
+      showDbUpdateNotification();
+    }
+    lastDbMtime = data.mtime;
+  } catch (e) { /* noop */ }
+}
+
+function showDbUpdateNotification() {
+  let notif = document.getElementById('db-update-notif');
+  if (!notif) {
+    notif = document.createElement('div');
+    notif.id = 'db-update-notif';
+    notif.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9000;min-width:280px;';
+    document.body.appendChild(notif);
+  }
+  notif.innerHTML = `
+    <div class="alert alert-info alert-dismissible shadow" role="alert">
+      <i class="bi bi-arrow-repeat"></i> Metis updated the database.
+      <a href="#" onclick="location.reload(); return false;" class="alert-link ms-1">Reload now</a>
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>`;
+}
+
+window.addEventListener('load', () => {
+  checkDbMtime();
+  setInterval(checkDbMtime, 20000);
+});
+
+// ---------------------------------------------------------------------------
+// Teach tab course actions
+// Each button copies a ready-to-paste Claude Code prompt to the clipboard.
+// ---------------------------------------------------------------------------
+
+function _copyAndToast(prompt) {
+  navigator.clipboard.writeText(prompt).then(() => {
+    showToast(
+      '<i class="bi bi-clipboard-check toast-icon"></i>Prompt copied — paste into Claude Code'
+    );
+  }).catch(() => {
+    showToast('Use this prompt in Claude Code:<br><code>' + prompt.slice(0, 80) + '…</code>');
+  });
+}
+
+function openCourseSlides(id, title) {
+  _copyAndToast(
+    `Create a lecture slide deck for my course: "${title}"\n\n` +
+    `Please ask me which module or lecture topic to create slides for, then produce a ` +
+    `complete deck with: title slide, learning objectives, content slides with speaker notes, ` +
+    `activity/discussion prompts, and a summary slide.`
+  );
+}
+
+function openTeachingBrief(id, title) {
+  _copyAndToast(
+    `Make me a teaching brief deck for a lecture in "${title}".\n\n` +
+    `Produce a one-page lecture guide for me as the instructor:\n` +
+    `- Learning objectives (3-5, Bloom taxonomy level)\n` +
+    `- Key concepts with 2-sentence explanation each\n` +
+    `- Suggested in-class activity or discussion question\n` +
+    `- Common student misconceptions to address\n` +
+    `- 3 exam-ready assessment questions with answer key`
+  );
+}
+
+function openAssessmentBuilder(id, title) {
+  _copyAndToast(
+    `Build an exam or assessment for my course "${title}".\n\n` +
+    `Ask me: difficulty level, question types (MCQ/short answer/essay), ` +
+    `Bloom taxonomy target, number of questions, and which topic to focus on. ` +
+    `Then generate the full assessment with a marking guide.`
+  );
+}
+
+function openQuestionBank(id, title) {
+  _copyAndToast(
+    `Build a student question bank for my course "${title}".\n\n` +
+    `Generate 20 practice questions organised by:\n` +
+    `- Difficulty: easy (recall) / medium (application) / hard (analysis)\n` +
+    `- Include model answers and common errors to watch for.\n` +
+    `Ask me which topic area to focus on first.`
+  );
+}
+
+function openGapAnalysis(id, title) {
+  _copyAndToast(
+    `Search the literature and run a curriculum gap analysis for my course "${title}".\n\n` +
+    `Review the current learning objectives and identify:\n` +
+    `1. Missing foundational concepts students likely need\n` +
+    `2. Recent high-impact literature (last 3 years) not yet covered\n` +
+    `3. Competency gaps vs current field or professional standards\n` +
+    `Suggest specific additions with justification and estimated teaching time.`
+  );
+}
+
+function openCourseChat(id, title) {
+  _copyAndToast(
+    `/metis\nI want to work on my teaching for the course "${title}". ` +
+    `Help me with: improving slide content, discussing pedagogy, updating material ` +
+    `for a specific lecture, or thinking through how to explain a difficult concept.`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Spaced repetition — mark card reviewed (SM-2)
+// ---------------------------------------------------------------------------
+
+function srReview(srId, quality, btn) {
+  btn.disabled = true;
+  fetch('/api/learning/review/' + srId, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quality: quality })
+  }).then(function (r) {
+    if (r.ok) return r.text();
+    throw new Error('review failed');
+  }).then(function (html) {
+    // Replace the whole due-today partial
+    const container = document.getElementById('sr-due-list');
+    if (container) {
+      const parent = container.closest('[id]') || container.parentElement;
+      parent.outerHTML = html;
+    }
+    showToast('<i class="bi bi-check-circle toast-icon"></i>Card reviewed — next review scheduled.');
+  }).catch(function () {
+    btn.disabled = false;
+    showToast("I couldn't save review. Try again.");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Inline capture bar (on Today tab)
+// ---------------------------------------------------------------------------
+
+let _captureMode = 'i';
+
+function setCaptureMode(btn) {
+  document.querySelectorAll('.capture-mode-btn, .question-mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _captureMode = btn.dataset.mode;
+  const placeholders = {
+    i: 'Capture an idea…',
+    t: 'Add a task…',
+    n: 'Write a note…',
+    q: 'Ask Metis…',
+  };
+  const inp = document.getElementById('inline-capture-input');
+  if (inp) inp.placeholder = placeholders[_captureMode] || 'Start typing…';
+}
+
+function handleCaptureKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    submitInlineCapture();
+  }
+}
+
+async function submitInlineCapture() {
+  const inp = document.getElementById('inline-capture-input');
+  const fb  = document.getElementById('inline-capture-feedback');
+  if (!inp || !inp.value.trim()) return;
+
+  const prefix = _captureMode + ':';
+  const body = new URLSearchParams({ text: prefix + inp.value.trim() });
+
+  try {
+    const res = await fetch('/api/capture', { method: 'POST', body });
+    const html = await res.text();
+    if (fb) fb.innerHTML = html;
+    inp.value = '';
+    setTimeout(() => { if (fb) fb.innerHTML = ''; }, 3000);
+  } catch {
+    if (fb) fb.innerHTML = '<span class="text-danger">Error saving — is the server running?</span>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Project cards — drag-to-reorder (live snap) + collapse/expand
+// ---------------------------------------------------------------------------
+
+let _dragSrc      = null;
+let _dragLastOver = null;   // tracks last card entered, prevents repeated DOM moves
+
+// WHERE THE PROJECT CARDS ACTUALLY LIVE.
+//
+// Four functions looked them up under `#project-grid`, an id that appears in no
+// template and in no rendered page. Everything downstream failed silently and
+// differently: initProjectCards returned at its first line so NOTHING was wired,
+// toggleProjectCollapse found no card and returned, so the minimise button was
+// present and inert; _restoreProjectStates matched nothing, so a collapse was
+// written to localStorage and never read back; and _saveProjectOrder posted an
+// empty order. Reported 2026-09-11 as "you cannot minimize projects".
+//
+// The real containers are `#project-groups` when grouped by category and a bare
+// grid when the ALL view is flat, so the lookup is by CARD CLASS and the
+// container is derived from a card. One author for the question, and it survives
+// the next layout too.
+function _projectCards() {
+  return document.querySelectorAll('.project-card[data-project-id]');
+}
+function _projectCard(projectId) {
+  return document.querySelector(`.project-card[data-project-id="${projectId}"]`);
+}
+function _projectGrid() {
+  const first = document.querySelector('.project-card[data-project-id]');
+  return first ? first.parentElement : null;
+}
+
+function _saveProjectOrder() {
+  const cards = _projectCards();
+  const order = Array.from(cards).map(c => c.dataset.projectId);
+  fetch('/api/project/reorder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order }),
+  });
+}
+
+function _restoreProjectStates() {
+  // THE SELECTOR NAMED A CONTAINER THAT DOES NOT EXIST. `#project-grid` is in no
+  // template and in no rendered page — the cards live under `#project-groups`
+  // when grouped and in a bare grid when flat. So this matched nothing, every
+  // collapse was written to localStorage and never read back, and a minimised
+  // project sprang open on the next load. Scoping to the card class instead
+  // survives both layouts and any future one. Found 2026-09-11.
+  _projectCards().forEach(card => {
+    const pid  = card.dataset.projectId;
+    const body = card.querySelector('.proj-body');
+    const btn  = card.querySelector('.proj-collapse-btn');
+    if (!body || !btn) return;
+    // COLLAPSED IS THE DEFAULT NOW. Asked for 2026-09-13: Work should open with
+    // the projects collapsed. Seventeen expanded cards is a page you scroll past
+    // rather than read; collapsed, the whole portfolio fits on one screen, and the
+    // title line plus the symbol row already answer "does this need me".
+    //
+    // The stored key therefore records the EXCEPTION — a project you chose to
+    // leave open — instead of the rule. The old key meant the opposite, so it is
+    // read once and migrated rather than stranding choices already made.
+    const _legacy = localStorage.getItem(`proj-collapsed-${pid}`);
+    if (_legacy !== null) {
+      if (_legacy !== '1') localStorage.setItem(`proj-open-${pid}`, '1');
+      localStorage.removeItem(`proj-collapsed-${pid}`);
+    }
+    if (localStorage.getItem(`proj-open-${pid}`) !== '1') {
+      body.style.display = 'none';
+      btn.textContent = '+';
+    }
+  });
+}
+
+function initProjectCards() {
+  const grid = _projectGrid();
+  if (!grid) return;
+
+  _restoreProjectStates();
+
+  // Use event delegation on the grid so we don't have to re-bind after DOM moves
+  grid.addEventListener('dragstart', e => {
+    const card = e.target.closest('.project-card[data-project-id]');
+    if (!card) return;
+    _dragSrc      = card;
+    _dragLastOver = null;
+    e.dataTransfer.effectAllowed = 'move';
+    // Delay opacity so browser can still snapshot the drag image
+    requestAnimationFrame(() => { if (_dragSrc) _dragSrc.style.opacity = '0.35'; });
+  });
+
+  grid.addEventListener('dragenter', e => {
+    e.preventDefault();
+    const card = e.target.closest('.project-card[data-project-id]');
+    if (!card || card === _dragSrc || card === _dragLastOver) return;
+    _dragLastOver = card;
+
+    // Determine insert position: before or after the hovered card
+    const rect = card.getBoundingClientRect();
+    const after = e.clientY > rect.top + rect.height / 2;
+    if (after) {
+      grid.insertBefore(_dragSrc, card.nextSibling);
+    } else {
+      grid.insertBefore(_dragSrc, card);
+    }
+  });
+
+  grid.addEventListener('dragover', e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+
+  grid.addEventListener('drop', e => {
+    e.preventDefault();
+    // DOM is already in the correct order from dragenter — nothing to do
+  });
+
+  grid.addEventListener('dragend', () => {
+    if (_dragSrc) _dragSrc.style.opacity = '';
+    _dragSrc      = null;
+    _dragLastOver = null;
+    _saveProjectOrder();
+  });
+}
+
+function toggleProjectCollapse(projectId) {
+  const card = _projectCard(projectId);
+  if (!card) return;
+  const body = card.querySelector('.proj-body');
+  const btn  = card.querySelector('.proj-collapse-btn');
+  if (!body) return;
+  const collapsed = body.style.display === 'none';
+  body.style.display = collapsed ? '' : 'none';
+  if (btn) btn.textContent = collapsed ? '−' : '+';
+  if (collapsed) {
+    localStorage.setItem(`proj-open-${projectId}`, '1');   // records the exception
+  } else {
+    localStorage.removeItem(`proj-open-${projectId}`);
+  }
+}
+
+async function untrackProject(projectId, title) {
+  if (!confirm(`Hide "${title}" from your dashboard?\n\nIt won't be deleted — you can show it again at the bottom of the Work tab.`)) return;
+  const card = _projectCard(projectId);
+  if (card) { card.style.opacity = '0.3'; card.style.pointerEvents = 'none'; }
+  await fetch(`/api/project/untrack/${projectId}`, { method: 'POST' });
+  htmx.ajax('GET', '/api/partial/work/projects', { target: '#projects-zone', swap: 'innerHTML' });
+}
+
+async function retrackProject(projectId) {
+  await fetch(`/api/project/track/${projectId}`, { method: 'POST' });
+  htmx.ajax('GET', '/api/partial/work/projects', { target: '#projects-zone', swap: 'innerHTML' });
+}
+
+// Re-init after HTMX settles (outerHTML swaps replace the element)
+document.addEventListener('htmx:afterSettle', () => {
+  // THE OUTERMOST GUARD, and the reason none of the rest ran: this asked for
+  // `#project-grid` before calling initProjectCards at all, so on a page where
+  // that id does not exist — which is every page — the whole project-card
+  // layer was never initialised. Ask whether there is a CARD.
+  if (document.querySelector('.project-card[data-project-id]')) initProjectCards();
+});
+
+document.addEventListener('DOMContentLoaded', initProjectCards);
+
+// ─── Library browser ───────────────────────────────────────────────────
+
+function setLibCollection(col) {
+  const hiddenEl = document.getElementById('lib-col-hidden');
+  if (hiddenEl) hiddenEl.value = col;
+  document.querySelectorAll('.lib-chip[data-col]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.col === col);
+  });
+  _refreshLibTable();
+}
+
+function setLibType(type) {
+  const hiddenEl = document.getElementById('lib-type-hidden');
+  if (hiddenEl) hiddenEl.value = type;
+  document.querySelectorAll('.lib-type-btn[data-type]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.type === type);
+  });
+  _refreshLibTable();
+}
+
+function _refreshLibTable() {
+  // Sync select values into hidden fields before submitting
+  const sortSel = document.getElementById('lib-sort');
+  const siSel   = document.getElementById('lib-search-in');
+  const yfInput = document.getElementById('lib-year-from');
+  const ytInput = document.getElementById('lib-year-to');
+  if (sortSel) { const h = document.getElementById('lib-sort-hidden'); if (h) h.value = sortSel.value; }
+  if (siSel)   { const h = document.getElementById('lib-si-hidden');   if (h) h.value = siSel.value; }
+  if (yfInput) { const h = document.getElementById('lib-yf-hidden');   if (h) h.value = yfInput.value; }
+  if (ytInput) { const h = document.getElementById('lib-yt-hidden');   if (h) h.value = ytInput.value; }
+
+  const q         = (document.getElementById('lib-q')         || {}).value || '';
+  const author    = (document.getElementById('lib-author')     || {}).value || '';
+  const col       = (document.getElementById('lib-col-hidden') || {}).value || '';
+  const type      = (document.getElementById('lib-type-hidden')|| {}).value || '';
+  const sort      = (document.getElementById('lib-sort-hidden')|| {}).value || 'newest';
+  const searchIn  = (document.getElementById('lib-si-hidden')  || {}).value || 'all';
+  const yearFrom  = (document.getElementById('lib-yf-hidden')  || {}).value || '';
+  const yearTo    = (document.getElementById('lib-yt-hidden')  || {}).value || '';
+  const journalQ  = (document.getElementById('lib-journal')    || {}).value || '';
+
+  htmx.ajax('GET', '/api/partial/knowledge/library-table', {
+    target: '#lib-table-area',
+    swap:   'outerHTML',
+    values: {
+      q, author, collection: col, item_type: type,
+      sort, search_in: searchIn,
+      year_from: yearFrom, year_to: yearTo,
+      journal_q: journalQ,
+    },
+  });
+}
+
+function clearLibFilters() {
+  ['lib-q','lib-author','lib-journal','lib-year-from','lib-year-to'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  ['lib-col-hidden','lib-type-hidden','lib-yf-hidden','lib-yt-hidden'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const sortEl = document.getElementById('lib-sort');
+  if (sortEl) sortEl.value = 'newest';
+  const siEl = document.getElementById('lib-search-in');
+  if (siEl) siEl.value = 'all';
+  document.querySelectorAll('.lib-chip[data-col]').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.col === ''));
+  document.querySelectorAll('.lib-type-btn[data-type]').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.type === ''));
+  _refreshLibTable();
+}
+
+function toggleAbstract(id) {
+  const el = document.getElementById('abs-' + id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+async function runMetisUpdate() {
+  const btn = document.getElementById('update-btn');
+  const spin = document.getElementById('update-spinner');
+  if (btn) { btn.style.display = 'none'; }
+  if (spin) { spin.style.display = 'inline'; }
+  try {
+    const res = await fetch('/api/scan/content', { method: 'POST' });
+    const data = await res.json();
+    const msg = data.summary || [
+      data.news_added   != null ? `${data.news_added} news`    : null,
+      data.papers_added != null ? `${data.papers_added} papers` : null,
+      data.zotero_added != null ? `${data.zotero_added} Zotero` : null,
+    ].filter(Boolean).join(' · ') || 'Update complete.';
+    showToast(msg);
+    // Refresh today scan panel if visible
+    const todayScan = document.getElementById('today-scan');
+    if (todayScan) {
+      htmx.ajax('GET', '/api/partial/today/scan', { target: '#today-scan', swap: 'outerHTML' });
+    }
+    // Refresh lib table if Library tab visible
+    const libTable = document.getElementById('lib-table-area');
+    if (libTable) {
+      htmx.ajax('GET', '/api/partial/knowledge/sync-status', { target: '#lib-sync-bar', swap: 'outerHTML' });
+    }
+    // Scan all project folders for activity
+    try {
+      await fetch('/api/project/scan-all', { method: 'POST' });
+      const workArea = document.getElementById('work-projects-list');
+      if (workArea) {
+        htmx.ajax('GET', '/api/partial/work/projects', { target: '#work-projects-list', swap: 'outerHTML' });
+      }
+    } catch (_) {}
+  } catch (e) {
+    showToast('Update failed: ' + e.message);
+  } finally {
+    if (btn) { btn.style.display = ''; }
+    if (spin) { spin.style.display = 'none'; }
+  }
+}
+
+/* ── The full update, the paid path ─────────────────────────────────────────
+   The top bar offered exactly two ways to update everything: Claude Desktop,
+   and a local scan. Every SECTION menu had a third — "with the API" — but the
+   global one did not, so the one control that says "update everything" was the
+   one control that could not use the API. This is that path.
+
+   It is a chain of the endpoints the section menus already call, run from here
+   rather than server-side on purpose: each step is minutes long (three web
+   searches, a batch of summaries, a written brief), and a single blocking POST
+   would show a frozen button for all of it and lose everything if one step
+   timed out. Run this way, each step reports as it lands and a failure costs
+   only its own step.
+
+   Order matters. The local scan runs FIRST so the summaries and the brief are
+   written about today's items rather than yesterday's. */
+async function runMetisUpdateApi() {
+  const btn  = document.getElementById('update-btn');
+  const spin = document.getElementById('update-spinner');
+  const say  = (t) => { if (spin) { spin.textContent = t; spin.style.display = 'inline'; } };
+  if (btn) { btn.style.display = 'none'; }
+
+  // Ask once, before spending anything. See /api/update/api-available.
+  try {
+    const probe = await fetch('/api/update/api-available');
+    const pd = await probe.json();
+    if (!pd.has_key) {
+      if (btn) { btn.style.display = ''; }
+      if (spin) { spin.style.display = 'none'; }
+      showToast('No API key is configured, so there is nothing for this path to ' +
+                'use. Pick “With Claude Desktop” — it runs the same update on ' +
+                'your subscription — or add a key in Metis → Settings.', 9000);
+      return;
+    }
+  } catch (_) { /* if the probe itself fails, go ahead and let the steps report */ }
+
+  const done = [], failed = [];
+  const step = async (name, fn) => {
+    say(name.toUpperCase() + '…');
+    try {
+      const r = await fn();
+      if (r === false) { failed.push(name); } else { done.push(typeof r === 'string' ? r : name); }
+    } catch (e) {
+      failed.push(name);
+    }
+  };
+
+  // 1 · Feeds, library, Zotero, projects — free, and it has to precede the rest.
+  await step('feeds & library', async () => {
+    const res = await fetch('/api/scan/content', { method: 'POST' });
+    const d = await res.json();
+    const bits = [
+      d.news_added   ? d.news_added + ' news'    : null,
+      d.papers_added ? d.papers_added + ' papers' : null,
+      d.zotero_added ? d.zotero_added + ' Zotero' : null,
+    ].filter(Boolean);
+    return bits.length ? bits.join(' · ') : 'feeds & library';
+  });
+
+  // 2 · The three boards, each a live web search.
+  for (const board of ['outbreaks', 'events', 'funding']) {
+    await step(board, async () => {
+      const res = await fetch('/api/today/board/' + board + '/refresh', { method: 'POST' });
+      if (!res.ok) return false;
+      const host = document.getElementById('board-' + board);
+      if (host) { host.outerHTML = await res.text(); }
+      return board;
+    });
+  }
+
+  // 3 · News summaries. An empty topic list means "all of them".
+  await step('news summaries', async () => {
+    const res = await fetch('/api/news/summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topics: [], period: 'week' }),
+    });
+    const d = await res.json().catch(() => ({}));
+    // The one failure worth naming rather than counting.
+    if (d && d.ok === false && /api key/i.test(d.error || '')) { return false; }
+    return res.ok ? 'news summaries' : false;
+  });
+
+  // 4 · The brief, last, so it is written about everything above it.
+  await step('daily brief', async () => {
+    const res = await fetch('/api/morning-brief/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'period=daily',
+    });
+    if (!res.ok) return false;
+    const host = document.getElementById('morning-brief');
+    if (host) { host.outerHTML = await res.text(); }
+    return 'daily brief';
+  });
+
+  if (btn)  { btn.style.display = ''; }
+  if (spin) { spin.style.display = 'none'; spin.textContent = 'UPDATING…'; }
+
+  let msg = done.length ? 'Updated: ' + done.join(' · ') : 'Nothing updated.';
+  if (failed.length) { msg += ' — could not reach: ' + failed.join(', ') + '.'; }
+  showToast(msg, 8000);
+}
+
+async function syncZoteroLibrary() {
+  const btn = document.getElementById('zotero-sync-btn');
+  if (btn) { btn.textContent = 'SYNCING…'; btn.disabled = true; }
+  try {
+    const res = await fetch('/api/knowledge/sync-zotero', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(data.message || 'Zotero sync complete.');
+      // Refresh the sync status bar and library table
+      htmx.ajax('GET', '/api/partial/knowledge/sync-status',  { target: '#lib-sync-bar',    swap: 'outerHTML' });
+      htmx.ajax('GET', '/api/partial/knowledge/library-table', { target: '#lib-table-area', swap: 'outerHTML' });
+    } else {
+      showToast('Sync failed: ' + (data.message || 'unknown error'));
+    }
+  } catch (e) {
+    showToast('Sync error: ' + e.message);
+  } finally {
+    if (btn) { btn.textContent = 'SYNC NOW'; btn.disabled = false; }
+  }
+}
+
+// ─── Integration — Claude Code mode toggle ────────────────────────────────
+
+function setClaudeCodeMode(mode) {
+  var label = mode === 'background' ? 'background layer (always-on)' : 'invoke mode (/metis per message)';
+  if (!confirm('Switch Claude Code to ' + label + '?\n\nThis will rewrite ~/.claude/CLAUDE.md.')) return;
+  fetch('/api/settings/claude-code-mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: mode })
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (d) {
+    if (d.status === 'ok') {
+      htmx.ajax('GET', '/api/partial/metis/integration', { target: '#metis-integration-body', swap: 'innerHTML' });
+      showToast(mode === 'background' ? 'Background layer activated — restart Claude Code to apply.' : 'Reverted to invoke mode.');
+    } else {
+      showToast((d.message || "I couldn't update CLAUDE.md."));
+    }
+  })
+  .catch(function () { showToast("I couldn't reach the dashboard — is it running?"); });
+}
+
+function copyDesktopPrompt() {
+  var el = document.getElementById('desktop-prompt-text');
+  if (!el) return;
+  var text = el.textContent || el.innerText;
+  navigator.clipboard.writeText(text).then(function () {
+    showToast('System prompt copied — paste it into your Claude Desktop project instructions.');
+  }).catch(function () {
+    showToast('Copy failed — select the text manually and use Ctrl+C.');
+  });
+}
+
+// ─── API key management ───────────────────────────────────────────────────
+
+function openApiKeyReplace(name, label) {
+  var overlay = document.getElementById('api-key-modal-overlay');
+  if (!overlay) return;
+  document.getElementById('akm-title').textContent = label || name || 'New key';
+  document.getElementById('akm-key-name').value = name || '';
+  document.getElementById('akm-key-name-display').value = name || '';
+  document.getElementById('akm-key-name-display').readOnly = !!name;
+  document.getElementById('akm-key-name-display').style.opacity = name ? '0.6' : '1';
+  document.getElementById('akm-key-value').value = '';
+  overlay.dataset.open = 'true';
+  setTimeout(function () {
+    var target = name ? document.getElementById('akm-key-value') : document.getElementById('akm-key-name-display');
+    if (target) target.focus();
+  }, 80);
+}
+
+function closeApiKeyModal() {
+  var overlay = document.getElementById('api-key-modal-overlay');
+  if (overlay) overlay.dataset.open = 'false';
+}
+
+function saveApiKey() {
+  var nameInput = document.getElementById('akm-key-name');
+  var nameDisplay = document.getElementById('akm-key-name-display');
+  var name = (nameInput && nameInput.value.trim()) || (nameDisplay && nameDisplay.value.trim()) || '';
+  var value = (document.getElementById('akm-key-value') || {}).value || '';
+  name = name.trim().toUpperCase().replace(/\s+/g, '_');
+  value = value.trim();
+  if (!name) { showToast('Key name is required.'); return; }
+  if (!value) { showToast('Key value is required.'); return; }
+  fetch('/api/settings/api-key', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Metis-Confirm': 'api-key' },
+    body: JSON.stringify({ name: name, value: value })
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (d) {
+    if (d.status === 'ok') {
+      closeApiKeyModal();
+      htmx.ajax('GET', '/api/partial/metis/api-keys', { target: '#metis-api-keys-body', swap: 'innerHTML' });
+      showToast('Key saved.');
+    } else {
+      showToast((d.message || "I couldn't save your API key."));
+    }
+  })
+  .catch(function () { showToast("I couldn't save key — network error."); });
+}
+
+function removeApiKey(name) {
+  if (!confirm('Remove ' + name + '? This cannot be undone.')) return;
+  fetch('/api/settings/api-key/' + encodeURIComponent(name), { method: 'DELETE', headers: { 'X-Metis-Confirm': 'api-key' } })
+  .then(function (r) { return r.json(); })
+  .then(function (d) {
+    if (d.status === 'ok') {
+      htmx.ajax('GET', '/api/partial/metis/api-keys', { target: '#metis-api-keys-body', swap: 'innerHTML' });
+      showToast('Key removed.');
+    } else {
+      showToast((d.message || "I couldn't remove key."));
+    }
+  })
+  .catch(function () { showToast("I couldn't remove key — network error."); });
+}
+
+// ─── MCP toggle button ─────────────────────────────────────────────────────
+var _mcpOnline = false;
+
+function _mcpSetOnline() {
+  _mcpOnline = true;
+  var dot   = document.getElementById('mcp-dot');
+  var label = document.getElementById('mcp-label');
+  var tbtn  = document.getElementById('mcp-toggle-btn');
+  var rbtn  = document.getElementById('mcp-reconnect-btn');
+  if (dot)   { dot.style.background = 'var(--m-ok)'; }
+  if (label) { label.textContent = 'Connected'; label.style.color = ''; }
+  if (tbtn)  { tbtn.style.borderColor = 'var(--m-rule)'; tbtn.title = 'Metis online — click to restart'; }
+  if (rbtn)  { rbtn.style.display = 'none'; }
+}
+
+function _mcpSetOffline() {
+  _mcpOnline = false;
+  var dot   = document.getElementById('mcp-dot');
+  var label = document.getElementById('mcp-label');
+  var tbtn  = document.getElementById('mcp-toggle-btn');
+  var rbtn  = document.getElementById('mcp-reconnect-btn');
+  if (dot)   { dot.style.background = 'var(--m-warn)'; }
+  if (label) { label.textContent = 'Offline'; label.style.color = 'var(--m-warn)'; }
+  if (tbtn)  { tbtn.style.borderColor = 'var(--m-warn)'; tbtn.title = 'Metis offline — click to reconnect'; }
+  if (rbtn)  { rbtn.style.display = 'none'; }
+}
+
+function _mcpSetDegraded(d) {
+  // The server is UP but not fully healthy: tool modules failed to load, or it's
+  // running stale installed code. Show an amber "attention" state with detail
+  // (Keystone P0.6b) so a non-technical user sees something is wrong.
+  _mcpOnline = true;
+  var dot   = document.getElementById('mcp-dot');
+  var label = document.getElementById('mcp-label');
+  var tbtn  = document.getElementById('mcp-toggle-btn');
+  var msg, tip;
+  if (d.stale_install) {
+    msg = 'Stale — reconnect';
+    tip = 'Metis is running older installed code than the source. Run tools/reinstall-mcp.sh, then reconnect the server.';
+  } else {
+    var n = d.modules_failed || 0;
+    msg = n + ' tool' + (n === 1 ? '' : 's') + ' failed';
+    tip = 'These tool modules failed to load in the running server: ' + ((d.failed_names || []).join(', ') || 'unknown') + '. Try reconnecting; if it persists, run tools/reinstall-mcp.sh.';
+  }
+  if (dot)   { dot.style.background = 'var(--m-warn)'; }
+  if (label) { label.textContent = msg; label.style.color = 'var(--m-warn)'; }
+  if (tbtn)  { tbtn.style.borderColor = 'var(--m-warn)'; tbtn.title = tip; }
+}
+
+function mcpToggle() {
+  if (_mcpOnline) {
+    // Already online — offer restart
+    if (!confirm('Restart the Metis MCP server?')) return;
+    mcpRestart();
+  } else {
+    mcpReconnect();
+  }
+}
+
+function mcpReconnect() {
+  var btn = document.getElementById('mcp-reconnect-btn');
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  fetch('/api/mcp/reload', { method: 'POST' })
+    .then(function (r) {
+      if (r.ok) {
+        _mcpSetOnline();
+        showToast('Metis tools connected.');
+      } else {
+        // Reload failed — offer a full restart instead
+        _mcpSetOffline();
+        if (btn) { btn.textContent = 'Restart Metis'; btn.disabled = false; btn.onclick = mcpRestart; }
+      }
+    })
+    .catch(function () {
+      _mcpSetOffline();
+      if (btn) { btn.textContent = 'Reconnect'; btn.disabled = false; }
+    });
+}
+
+function mcpRestart() {
+  var btn = document.getElementById('mcp-reconnect-btn');
+  if (btn) { btn.textContent = 'Restarting…'; btn.disabled = true; }
+  fetch('/api/restart', { method: 'POST', headers: { 'X-Metis-Confirm': 'restart' } })
+    .then(function () {
+      // Poll /health until the server is back up, then reload the page
+      var attempts = 0;
+      var poll = setInterval(function () {
+        attempts++;
+        fetch('/health').then(function (r) {
+          if (r.ok) {
+            clearInterval(poll);
+            window.location.reload();
+          }
+        }).catch(function () { /* still restarting */ });
+        if (attempts > 30) { clearInterval(poll); if (btn) { btn.textContent = 'Reconnect'; btn.disabled = false; } }
+      }, 500);
+    })
+    .catch(function () {
+      if (btn) { btn.textContent = 'Reconnect'; btn.disabled = false; }
+      showToast('Restart failed — please close and reopen Metis from the desktop shortcut.');
+    });
+}
+
+(function () {
+  fetch('/api/mcp/status')
+    .then(function (r) {
+      if (!r.ok) { _mcpSetOffline(); return; }
+      return r.json().then(function (d) {
+        if (d && (d.modules_failed > 0 || d.stale_install)) {
+          _mcpSetDegraded(d);
+        } else {
+          _mcpSetOnline();
+        }
+      });
+    })
+    .catch(function () { /* server not yet ready — leave grey */ });
+})();
+
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') {
+    closeApiKeyModal();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Literature Discovery actions
+// ---------------------------------------------------------------------------
+
+function scanLiterature(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+  fetch('/api/today/literature-discovery/scan', { method: 'POST' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      showToast(d.ok ? 'Scan complete — refreshing…' : ('Scan failed: ' + (d.error || '')));
+      // Refresh the partial
+      var el = document.getElementById('today-lit-discovery');
+      if (el) { htmx.ajax('GET', '/api/partial/today/literature-discovery', { target: el, swap: 'outerHTML' }); }
+    })
+    .catch(function () { showToast('Scan failed — check your connection.'); })
+    .finally(function () { if (btn) { btn.disabled = false; btn.textContent = 'Scan now'; } });
+}
+
+function addToLibrary(pubId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  fetch('/api/today/literature-discovery/add', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pub_id: pubId })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        showToast('Added to library');
+        var row = document.getElementById('lit-paper-' + pubId);
+        if (row) { row.style.opacity = '0.4'; row.style.transition = 'opacity 0.3s'; }
+        // Refresh partial after brief delay
+        setTimeout(function () {
+          var el = document.getElementById('today-lit-discovery');
+          if (el) { htmx.ajax('GET', '/api/partial/today/literature-discovery', { target: el, swap: 'outerHTML' }); }
+        }, 600);
+      } else { showToast('Failed: ' + (d.error || '')); }
+    })
+    .catch(function () { showToast('Failed to add.'); })
+    .finally(function () { if (btn) { btn.disabled = false; btn.textContent = '+ Library'; } });
+}
+
+function copyDoi(doi, btn) {
+  navigator.clipboard.writeText(doi).then(function () {
+    showToast('DOI copied: ' + doi);
+    if (btn) { var orig = btn.textContent; btn.textContent = '✓'; setTimeout(function () { btn.textContent = orig; }, 1500); }
+  }).catch(function () { showToast('Copy failed — DOI: ' + doi); });
+}
+
+function dismissPaper(pubId, btn) {
+  fetch('/api/today/literature-discovery/dismiss', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pub_id: pubId })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        var row = document.getElementById('lit-paper-' + pubId);
+        if (row) { row.style.display = 'none'; }
+      }
+    })
+    .catch(function () { /* silent */ });
+}
+
+// ==========================================================================
+// Update menu — open/close the "↻ Update" popover rendered by
+// templates/partials/_update_menu.html. One open at a time; click-away closes.
+// Defined globally so it survives HTMX partial swaps.
+// ==========================================================================
+function _closeAllUpdateMenus() {
+  document.querySelectorAll('.update-menu.is-open').forEach(function (m) {
+    m.classList.remove('is-open');
+    var t = m.querySelector('.update-menu-trigger');
+    if (t) t.setAttribute('aria-expanded', 'false');
+  });
+}
+function toggleUpdateMenu(btn) {
+  var menu = btn.closest('.update-menu');
+  if (!menu) return;
+  var wasOpen = menu.classList.contains('is-open');
+  _closeAllUpdateMenus(); // only one open at a time
+  if (wasOpen) return;
+  // Place the fixed popover from the trigger's viewport rect so it escapes any
+  // overflow:hidden ancestor (short board cards, the navbar controls bar).
+  var pop = menu.querySelector('.update-menu-pop');
+  if (pop) {
+    var r = btn.getBoundingClientRect();
+    pop.style.top = (r.bottom + 6) + 'px';
+    if ((pop.getAttribute('data-align') || 'left') === 'right') {
+      pop.style.left = 'auto';
+      pop.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+    } else {
+      pop.style.right = 'auto';
+      pop.style.left = Math.max(8, r.left) + 'px';
+    }
+  }
+  menu.classList.add('is-open');
+  btn.setAttribute('aria-expanded', 'true');
+}
+// Click outside closes; Esc closes; scroll/resize close (fixed popover won't follow).
+document.addEventListener('click', function (e) {
+  if (e.target.closest('.update-menu')) return;
+  _closeAllUpdateMenus();
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') _closeAllUpdateMenus();
+});
+window.addEventListener('scroll', _closeAllUpdateMenus, true);
+window.addEventListener('resize', _closeAllUpdateMenus);
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Progressive disclosure — peek/expand and zones.   (audit 2026-08-25)
+
+   Delegated from document, so it works on HTMX-swapped content without
+   rebinding. State is remembered per key in localStorage: a panel that
+   re-expands on every visit is not collapsed, it is annoying.
+
+   localStorage can throw outright in a private window or with site data
+   blocked, so every read and write is guarded and the page works with none.
+   ══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  var NS = 'metis.disclosure.';
+
+  function remembered(key) {
+    try { return localStorage.getItem(NS + key); } catch (e) { return null; }
+  }
+  function remember(key, val) {
+    try { localStorage.setItem(NS + key, val); } catch (e) { /* fine */ }
+  }
+
+  function setOpen(btn, body, open) {
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) { body.removeAttribute('hidden'); } else { body.setAttribute('hidden', ''); }
+    var chev = btn.querySelector('.ui-chev');
+    if (chev) { chev.textContent = open ? '▾' : '▸'; }
+    var label = btn.querySelector('.ui-peek-text');
+    if (label) {
+      label.textContent = open ? 'show fewer' : (btn.getAttribute('data-peek-more') || 'more');
+    }
+  }
+
+  document.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('.ui-peek-toggle, .ui-zone-head');
+    if (!btn) return;
+    var body = document.getElementById(btn.getAttribute('aria-controls'));
+    if (!body) return;
+    var open = btn.getAttribute('aria-expanded') !== 'true';
+    setOpen(btn, body, open);
+    var host = btn.closest('[data-peek-key], [data-zone-key]');
+    if (host) {
+      remember(host.getAttribute('data-peek-key') || host.getAttribute('data-zone-key'),
+               open ? '1' : '0');
+    }
+  });
+
+  /* Re-apply remembered state after any HTMX swap, and once at load. */
+  function restore(root) {
+    (root || document).querySelectorAll('[data-peek-key], [data-zone-key]').forEach(function (host) {
+      var key = host.getAttribute('data-peek-key') || host.getAttribute('data-zone-key');
+      var want = remembered(key);
+      if (want === null) return;
+      var btn = host.querySelector('.ui-peek-toggle, .ui-zone-head');
+      if (!btn) return;
+      var body = document.getElementById(btn.getAttribute('aria-controls'));
+      if (body) setOpen(btn, body, want === '1');
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function () { restore(document); });
+  document.body && document.body.addEventListener('htmx:afterSwap', function (e) {
+    restore(e.target);
+  });
+})();
+
+/* ── Triage: the tag field toggle ────────────────────────────────────────────
+   The only JS the reading stack needs. Everything else is HTMX, deliberately:
+   a triage button posts and swaps back the list it came from, so there is no
+   client state to keep in step with the server. */
+window.metis = window.metis || {};
+metis.triage = {
+  toggleTags: function (btn) {
+    var row = btn.closest('.tri');
+    if (!row) return;
+    var box = row.querySelector('.tri-tags');
+    if (!box) return;
+    var hidden = box.classList.toggle('is-hidden');
+    if (!hidden) { var i = box.querySelector('input[name="tags"]'); if (i) i.focus(); }
+  }
+};
+
+/* ── Keyboard triage ─────────────────────────────────────────────────────────
+   News draws five action buttons on every row. At sixty rows that is three
+   hundred small targets to clear one day's reading, and the icons sit at full
+   strength so the eye lands on controls rather than headlines.
+
+   The keys are the ACTIONS THAT EXIST, not a generic j/k/e set: the triage
+   verbs in _item.html are later / save / read / decline / tag, so the keys are
+   l / s / r / x / t. Guessing a mapping and then bending the product to it is
+   how you end up with shortcuts nobody can remember.
+
+   Rules this obeys:
+     · never steals a key while you are typing (input, textarea, select,
+       contenteditable) or while a modifier is held — otherwise ⌘R reloads and
+       "s" in the search box triages a story.
+     · the cursor row is a real focus target, so screen readers follow it and
+       Tab continues from the right place.
+     · no client state that the server also holds. Pressing a key CLICKS the
+       button that was already there, so HTMX does the work and the row comes
+       back from the server exactly as a mouse click would return it.
+     · re-collects after every HTMX swap, because the list is replaced wholesale.
+   ────────────────────────────────────────────────────────────────────────── */
+window.metis = window.metis || {};
+metis.keys = (function () {
+  var ROW_SEL = '.ov-item, [data-triage-row]';
+  var rows = [], idx = -1, sheet = null;
+
+  var ACTIONS = {           // key -> the button that already exists in the row
+    l: '.act--later',
+    s: '.act--saved',
+    r: '.act--read',
+    x: '.act--declined',
+    t: '.act--tag'
+  };
+
+  function collect() {
+    rows = Array.prototype.filter.call(
+      document.querySelectorAll(ROW_SEL),
+      function (r) { return r.offsetParent !== null; }   // skip anything folded away
+    );
+    if (idx >= rows.length) idx = rows.length - 1;
+  }
+
+  function paint() {
+    rows.forEach(function (r, i) {
+      var on = (i === idx);
+      r.classList.toggle('is-cursor', on);
+      if (on) {
+        r.setAttribute('tabindex', '-1');
+        r.focus({ preventScroll: true });
+        var box = r.getBoundingClientRect();
+        if (box.top < 80 || box.bottom > window.innerHeight - 40) {
+          r.scrollIntoView({ block: 'center',
+            behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+              ? 'auto' : 'smooth' });
+        }
+      } else {
+        r.removeAttribute('tabindex');
+      }
+    });
+  }
+
+  function move(delta) {
+    collect();
+    if (!rows.length) return;
+    idx = (idx < 0) ? 0 : idx + delta;
+    if (idx < 0) idx = 0;
+    if (idx > rows.length - 1) idx = rows.length - 1;
+    paint();
+  }
+
+  function act(selector) {
+    if (idx < 0 || !rows[idx]) return;
+    var btn = rows[idx].querySelector(selector);
+    if (!btn) return;
+    var next = idx;                       // the row will be replaced; stay put
+    btn.click();
+    window.setTimeout(function () { collect(); idx = Math.min(next, rows.length - 1); paint(); }, 60);
+  }
+
+  function open() {
+    if (idx < 0 || !rows[idx]) return;
+    var link = rows[idx].querySelector('a[href]');
+    if (link) window.open(link.href, '_blank', 'noopener');
+  }
+
+  function typing(e) {
+    var t = e.target;
+    if (!t) return false;
+    if (t.isContentEditable) return true;
+    var tag = (t.tagName || '').toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select';
+  }
+
+  function help() {
+    if (sheet) { sheet.remove(); sheet = null; return; }
+    sheet = document.createElement('div');
+    sheet.className = 'keysheet';
+    sheet.setAttribute('role', 'dialog');
+    sheet.setAttribute('aria-label', 'Keyboard shortcuts');
+    sheet.innerHTML =
+      '<h2>Keys</h2><dl>' +
+      '<dt>j / k</dt><dd>next / previous</dd>' +
+      '<dt>↵</dt><dd>open in a new tab</dd>' +
+      '<dt>l</dt><dd>read later</dd>' +
+      '<dt>s</dt><dd>save</dd>' +
+      '<dt>r</dt><dd>already read</dd>' +
+      '<dt>x</dt><dd>not for me</dd>' +
+      '<dt>t</dt><dd>tag</dd>' +
+      '<dt>esc</dt><dd>clear the cursor</dd>' +
+      '</dl><p>The mouse still does everything it did.</p>';
+    document.body.appendChild(sheet);
+  }
+
+  function onKey(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey || typing(e)) return;
+    var k = e.key;
+    if (k === '?') { e.preventDefault(); help(); return; }
+    if (k === 'Escape') {
+      if (sheet) { sheet.remove(); sheet = null; return; }
+      idx = -1; collect(); paint(); return;
+    }
+    if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); move(1);  return; }
+    if (k === 'k' || k === 'ArrowUp')   { e.preventDefault(); move(-1); return; }
+    if (idx < 0) return;                       // the rest need a cursor first
+    if (k === 'Enter') { e.preventDefault(); open(); return; }
+    var sel = ACTIONS[k];
+    if (sel) { e.preventDefault(); act(sel); }
+  }
+
+  function init() {
+    collect();
+    if (!rows.length) return;
+    if (document.querySelector('.keyhint')) return;
+    var hint = document.createElement('div');
+    hint.className = 'keyhint';
+    hint.textContent = 'press ? for keys';
+    document.body.appendChild(hint);
+  }
+
+  document.addEventListener('keydown', onKey);
+  document.addEventListener('DOMContentLoaded', init);
+  document.body && document.body.addEventListener('htmx:afterSwap', function () {
+    collect(); paint(); init();
+  });
+
+  return { move: move, act: act, help: help };
+})();
+
+/* Remember the chosen news density. The server owns which view RENDERS (the
+   markup genuinely differs), so this only restores the preference on arrival —
+   it never re-renders on its own, or every visit would cost an extra request. */
+(function () {
+  function restore() {
+    var strip = document.querySelector('.news-view');
+    if (!strip || strip.dataset.restored) return;
+    strip.dataset.restored = '1';
+    var want;
+    try { want = localStorage.getItem('metis.news.view'); } catch (e) { return; }
+    if (!want) return;
+    var btn = strip.querySelector('[aria-pressed="true"]');
+    if (btn && btn.getAttribute('onclick') &&
+        btn.getAttribute('onclick').indexOf("'" + want + "'") > -1) return;
+    var target = Array.prototype.find.call(
+      strip.querySelectorAll('.news-view-btn'),
+      function (b) { var o = b.getAttribute('onclick') || '';
+                     return o.indexOf("'" + want + "'") > -1; });
+    if (target) target.click();
+  }
+  document.addEventListener('DOMContentLoaded', restore);
+  document.body && document.body.addEventListener('htmx:afterSwap', restore);
+})();
+
+
+/* ── Every section folds, on every surface ───────────────────────────────────
+   Reported 2026-08-26: "I also thought we were working on artefacts for every
+   surface, so every section is collapsible?"
+
+   ONE MECHANISM, NOT EIGHT TEMPLATES. Every section heading in this application
+   is already `.sec-label` — about a hundred of them across Today, Library, Work,
+   Meetings, Learning, Reflection, News and Teach. Hand-wrapping each one in a
+   `zone()` would be a week of edits, would miss the ones added next month, and
+   would give eight surfaces eight slightly different folds.
+
+   So the heading itself becomes the control: click it, and everything between it
+   and the next heading of the same rank folds away. A section added tomorrow
+   gets the behaviour for free, because it will use `.sec-label` like the rest.
+
+   THE RULES THAT MATTER
+     · Open by default. A surface that greets you closed is a surface you have to
+       excavate. Folding is the reader's choice, and it is remembered.
+     · The heading keeps its tail. What is folded is the DETAIL, never the fact —
+       the same rule the Today audit landed on, so a collapsed section still tells
+       you how many of something there are.
+     · Headings already inside a `.ui-zone` are skipped: they have a fold already,
+       and nesting one inside another gives two chevrons that disagree.
+     · Real keyboard semantics — role, tabindex, aria-expanded, Enter and Space.
+       A div you can only click is not a control.
+     · State is keyed on surface + heading text, and every read and write is
+       wrapped: localStorage throws outright in a private window. */
+(function () {
+  var KEY = 'metis.fold.v1';
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(KEY) || '{}'); }
+    catch (e) { return {}; }
+  }
+  function save(state) {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* fine */ }
+  }
+  function idOf(h) {
+    var page = (location.pathname || '/').replace(/\/+$/, '') || '/';
+    var label = (h.querySelector('span') ? h.querySelector('span').textContent : h.textContent);
+    return page + '::' + (label || '').trim().slice(0, 60);
+  }
+
+  /* Everything up to the next heading of the same rank or higher. Stopping at
+     "same or higher" is what lets an h3 subsection fold inside an open h2
+     without swallowing the h2's siblings. */
+  function bodyOf(h) {
+    var rank = parseInt(h.tagName.slice(1), 10) || 2;
+    var out = [], n = h.nextElementSibling;
+    while (n) {
+      var m = /^H([1-6])$/.exec(n.tagName);
+      if (m && parseInt(m[1], 10) <= rank && n.classList.contains('sec-label')) break;
+      out.push(n);
+      n = n.nextElementSibling;
+    }
+    return out;
+  }
+
+  function apply(h, open) {
+    bodyOf(h).forEach(function (el) { el.hidden = !open; });
+    h.setAttribute('aria-expanded', open ? 'true' : 'false');
+    h.classList.toggle('is-folded', !open);
+  }
+
+  function wire(h) {
+    if (h.dataset.foldable) return;
+    if (h.closest('.ui-zone-body')) return;      // already inside a fold
+    var body = bodyOf(h);
+    if (!body.length) return;                    // a heading over nothing
+    h.dataset.foldable = '1';
+
+    var chev = document.createElement('span');
+    chev.className = 'sec-chev';
+    chev.setAttribute('aria-hidden', 'true');
+    chev.textContent = '▾';
+    h.insertBefore(chev, h.firstChild);
+
+    h.setAttribute('role', 'button');
+    h.setAttribute('tabindex', '0');
+    h.classList.add('is-foldable');
+
+    var state = load();
+    apply(h, state[idOf(h)] !== false);
+
+    function toggle() {
+      var open = h.getAttribute('aria-expanded') !== 'true';
+      apply(h, open);
+      var s = load();
+      if (open) { delete s[idOf(h)]; } else { s[idOf(h)] = false; }
+      save(s);
+    }
+    h.addEventListener('click', function (e) {
+      /* A heading often carries its own controls — a period switcher, an update
+         menu, a link. Clicking those must not fold the section under them. */
+      if (e.target.closest('a, button, input, select, .update-menu')) return;
+      toggle();
+    });
+    h.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  }
+
+  function scan(root) {
+    (root || document).querySelectorAll('h2.sec-label, h3.sec-label').forEach(wire);
+  }
+
+  document.addEventListener('DOMContentLoaded', function () { scan(document); });
+  document.addEventListener('htmx:afterSwap', function (e) { scan(e.target || document); });
+  document.addEventListener('htmx:afterSettle', function (e) { scan(e.target || document); });
+})();
+
+/* ── Density: the reader chooses how tight the lists are ─────────────────────
+   A research feed is skimmed on Monday and studied on Thursday, and those want
+   different row heights. Three steps, applied to <html data-density> so every
+   `--d-*` token shifts at once and no component needs to know about it.
+
+   The initial value is set in base.html BEFORE the stylesheet paints; this only
+   handles changes. */
+window.metis = window.metis || {};
+metis.density = {
+  set: function (value) {
+    var el = document.documentElement;
+    if (value === 'cosy') { delete el.dataset.density; }
+    else { el.dataset.density = value; }
+    try {
+      if (value === 'cosy') localStorage.removeItem('metis.density');
+      else localStorage.setItem('metis.density', value);
+    } catch (e) { /* the change still applies for this page */ }
+    document.querySelectorAll('[data-density-btn]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.densityBtn === value ? 'true' : 'false');
+    });
+  },
+  current: function () {
+    return document.documentElement.dataset.density || 'cosy';
+  }
+};
+
+/* Reflect the active density on the control after any swap. */
+(function () {
+  function sync() {
+    var v = metis.density.current();
+    document.querySelectorAll('[data-density-btn]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.densityBtn === v ? 'true' : 'false');
+    });
+  }
+  document.addEventListener('DOMContentLoaded', sync);
+  document.addEventListener('htmx:afterSwap', sync);
+})();
+
+/* ── A keyboard path for clickable elements ──────────────────────────────────
+   44 <div> and <span> elements carried an onclick and nothing else: reachable
+   with a mouse, unreachable with a keyboard. `fix_accessibility.py` gave them
+   role="button" and tabindex="0"; this supplies the other half of what a real
+   button does for free — Enter and Space activate it.
+
+   Delegated once rather than written onto forty-four elements, and it checks
+   role="button" so it cannot hijack Space inside a text field or a link. */
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  var el = e.target;
+  if (!el || el.getAttribute('role') !== 'button') return;
+  if (el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT') return;
+  e.preventDefault();
+  el.click();
+});
+
+/* ── The optional target date ────────────────────────────────────────────────
+   One menu open at a time, closed by Escape or a click elsewhere. The control
+   is deliberately quiet when a task has no date: not knowing when you will get
+   to something is the normal case, and a column of prompts to fill something in
+   is how a field ends up ignored. */
+metis.due = {
+  open: function (btn) {
+    var wrap = btn.closest('.due');
+    if (!wrap) return;
+    var menu = wrap.querySelector('.due-menu');
+    if (!menu) return;
+    var wasHidden = menu.classList.contains('is-hidden');
+    document.querySelectorAll('.due-menu').forEach(function (m) {
+      m.classList.add('is-hidden');
+    });
+    if (wasHidden) {
+      menu.classList.remove('is-hidden');
+      var first = menu.querySelector('.due-opt');
+      if (first) first.focus();
+    }
+  }
+};
+document.addEventListener('click', function (e) {
+  if (e.target.closest('.due')) return;
+  document.querySelectorAll('.due-menu').forEach(function (m) {
+    m.classList.add('is-hidden');
+  });
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  document.querySelectorAll('.due-menu:not(.is-hidden)').forEach(function (m) {
+    m.classList.add('is-hidden');
+  });
+});
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ONE METIS AT A TIME
+   ─────────────────────────────────────────────────────────────────────────
+   Reported 2026-09-02: "every day I open Metis but there are still old Metis'
+   version open in my browsers ... what would be an elegant way to have only
+   one Metis version open at a time."
+
+   A page cannot close a tab it did not open — every browser blocks
+   `window.close()` there, and no flag changes that. So "close the old ones"
+   is not available, and anything promising it would fail silently. What IS
+   available is making the old tab stop pretending to be current: the newest
+   tab claims Metis, and every older one draws a curtain over itself with one
+   button that takes the session back — reloading as it does, because a tab
+   that has been sitting since yesterday is stale whether or not it is
+   dormant.
+
+   Two ways a tab goes stale, and both land on the same curtain:
+     1. Another tab claimed the session   (BroadcastChannel)
+     2. The dashboard restarted with new assets (/api/build != our stamp)
+
+   The second is the one that was actually biting: the cache-busting stamp on
+   styles.css and app.js used to be hand-typed, so an open tab kept serving
+   weeks-old CSS. That stamp is now derived from the files, and this checks it.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function metisSingleInstance() {
+  var CH = 'metis-instance';
+  var LS = 'metis:claim';
+  var myId = String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8);
+  var myBuild = (function () {
+    var el = document.querySelector('script[src*="app.js?v="]');
+    var m = el && el.getAttribute('src').match(/[?&]v=([^&]+)/);
+    return m ? m[1] : '';
+  })();
+  var dormant = false;
+  var bc = null;
+  try { bc = new BroadcastChannel(CH); } catch (_) { /* fall back to storage */ }
+
+  function send(msg) {
+    msg.id = myId;
+    if (bc) { try { bc.postMessage(msg); return; } catch (_) {} }
+    // storage events only fire in OTHER tabs, which is exactly what we want.
+    try { localStorage.setItem(LS, JSON.stringify(msg)); } catch (_) {}
+  }
+
+  function curtain(title, body, buttonLabel) {
+    if (document.getElementById('metis-curtain')) return;
+    var d = document.createElement('div');
+    d.id = 'metis-curtain';
+    d.setAttribute('role', 'dialog');
+    d.setAttribute('aria-modal', 'true');
+    d.innerHTML =
+      '<div class="mc-inner">' +
+        '<p class="mc-eyebrow">Metis</p>' +
+        '<h2 class="mc-title"></h2>' +
+        '<p class="mc-body"></p>' +
+        '<button type="button" class="mc-go"></button>' +
+      '</div>';
+    // textContent, not innerHTML — none of this is markup.
+    d.querySelector('.mc-title').textContent = title;
+    d.querySelector('.mc-body').textContent = body;
+    var go = d.querySelector('.mc-go');
+    go.textContent = buttonLabel;
+    go.addEventListener('click', function () {
+      // Claim first, so the tab we are taking over from goes dormant, THEN
+      // reload — a tab that has been idle since yesterday has stale data as
+      // well as a stale claim.
+      send({ t: 'claim', at: Date.now() });
+      setTimeout(function () { location.reload(); }, 60);
+    });
+    document.body.appendChild(d);
+    go.focus();
+  }
+
+  function goDormant(reason) {
+    if (dormant) return;
+    dormant = true;
+    document.body.classList.add('is-dormant');
+    // Stop this tab doing work it will never show. HTMX polling is the only
+    // repeating traffic; killing the triggers is enough and needs no registry.
+    document.querySelectorAll('[hx-trigger*="every"]').forEach(function (el) {
+      el.removeAttribute('hx-trigger');
+    });
+    if (reason === 'build') {
+      curtain('This tab is running an older Metis.',
+              'The dashboard has been updated since you opened it, so what you '
+              + 'see here is out of date.',
+              'Reload with the new version');
+    } else {
+      curtain('Metis is open in a newer tab.',
+              'Only one tab stays live, so the two cannot disagree about what '
+              + 'is new or what you have already read.',
+              'Use Metis in this tab');
+    }
+  }
+
+  function onClaim(msg) {
+    if (!msg || msg.t !== 'claim' || msg.id === myId) return;
+    // Later claim wins. Ties broken on id so two tabs opened in the same
+    // millisecond cannot both stay live, or both go dormant.
+    if (msg.at > myClaimedAt || (msg.at === myClaimedAt && msg.id > myId)) {
+      goDormant('claim');
+    }
+  }
+
+  var myClaimedAt = Date.now();
+  if (bc) { bc.onmessage = function (e) { onClaim(e.data); }; }
+  window.addEventListener('storage', function (e) {
+    if (e.key !== LS || !e.newValue) return;
+    try { onClaim(JSON.parse(e.newValue)); } catch (_) {}
+  });
+  send({ t: 'claim', at: myClaimedAt });
+
+  // Coming back to a tab is the moment to find out whether it is still current.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible' || dormant || !myBuild) return;
+    fetch('/api/build', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.build && d.build !== myBuild) goDormant('build'); })
+      .catch(function () { /* server down — say nothing rather than cry wolf */ });
+  });
+})();
+
+// ─── Tab sets ────────────────────────────────────────────────────────────────
+// Choosing between views, rather than stacking them. Delegated on document, so
+// it keeps working after an HTMX swap replaces the panels — binding per button
+// would silently stop working the first time a partial re-rendered, which is the
+// failure mode that made a whole layer of project-card controls inert.
+//
+// Panels declare which set and tab they belong to; the tab does no fetching, so
+// switching is instant. A pane whose content is expensive carries its own hx-get
+// with hx-trigger="revealed once" and pays only when first shown.
+//
+// That trigger does NOT fire on its own here, and the reason is easy to miss:
+// htmx evaluates `revealed` against the element's box, and a pane hidden with the
+// `hidden` attribute has no box — so un-hiding it is not a reveal, and no scroll
+// follows to make it one. Left alone, the expensive pane stays empty forever and
+// looks like a server error. So showing a pane fires `revealed` at anything
+// inside it that is waiting for one. The `once` modifier is htmx's, so a pane
+// still loads exactly one time however often you switch back to it.
+document.addEventListener('click', function (ev) {
+  const tab = ev.target.closest('.ui-tab[data-tabset][data-tab]');
+  if (!tab) return;
+  const set = tab.dataset.tabset;
+  const want = tab.dataset.tab;
+
+  document.querySelectorAll(`.ui-tab[data-tabset="${set}"]`).forEach(t => {
+    t.setAttribute('aria-selected', String(t.dataset.tab === want));
+  });
+  document.querySelectorAll(`.ui-tabpane[data-tabset="${set}"]`).forEach(p => {
+    // .hidden, not style.display. There is NO global [hidden] rule in this
+    // stylesheet — the convention is one per component — so `.ui-tabpane[hidden]`
+    // is declared alongside these panes. Without it the attribute would lose to
+    // any display: flex on the pane and a "hidden" tab would stay on screen.
+    p.hidden = (p.dataset.tab !== want);
+    if (!p.hidden && window.htmx) {
+      p.querySelectorAll('[hx-trigger~="revealed"]').forEach(el => {
+        try { window.htmx.trigger(el, 'revealed'); } catch (_) {}
+      });
+    }
+  });
+  try { localStorage.setItem(`metis.tab.${set}`, want); } catch (_) {}
+});
+
+// Restore the tab the reader last chose, per set.
+function restoreTabs(root) {
+  (root || document).querySelectorAll('.ui-tabs[data-tabset]').forEach(bar => {
+    const set = bar.dataset.tabset;
+    let want = null;
+    try { want = localStorage.getItem(`metis.tab.${set}`); } catch (_) {}
+    if (!want) return;
+    const tab = document.querySelector(`.ui-tab[data-tabset="${set}"][data-tab="${want}"]`);
+    if (tab) tab.click();
+  });
+}
+document.addEventListener('DOMContentLoaded', () => restoreTabs());
+document.body && document.body.addEventListener('htmx:afterSwap', e => restoreTabs(e.target));
+
+// ─── Workstation: drag between the columns ───────────────────────────────────
+// The three columns are the three questions a morning asks, and dragging is the
+// answer moving between them. Two sources, one target, and each writes through
+// the endpoint that already owns that meaning — no new store, no fourth kind:
+//
+//   where you left off  →  today   plans that project for today (day_plan)
+//   reading stack       →  today   flags it crucial, which is what the stack
+//                                  already means by "read this first"
+//   course (Learning)   →  today   plans its next lesson (day_plan kind=learning)
+//
+// The learning drop has its OWN endpoint rather than a third branch of
+// /api/today/plan/add — that route coerces any unknown kind to 'task', so a
+// course would have been written as a task with no id: nothing inserted, success
+// returned. A fallback that is wrong for the new case is worse than no fallback.
+//
+// Delegated on document so it survives the HTMX swaps these panels do constantly.
+(function () {
+  let held = null;
+
+  document.addEventListener('dragstart', function (ev) {
+    const row = ev.target.closest('.ws-drag[data-ws-kind][data-ws-id]');
+    if (!row) return;
+    held = { kind: row.dataset.wsKind, id: row.dataset.wsId,
+             sub: row.dataset.wsSub || '', label: row.dataset.wsLabel || '' };
+    ev.dataTransfer.effectAllowed = 'copy';
+    // Some browsers refuse to start a drag with no payload set.
+    try { ev.dataTransfer.setData('text/plain', held.id); } catch (_) {}
+    row.classList.add('ws-drag--held');
+  });
+
+  document.addEventListener('dragend', function (ev) {
+    const row = ev.target.closest('.ws-drag');
+    if (row) row.classList.remove('ws-drag--held');
+    held = null;
+  });
+
+  function target(ev) {
+    const col = ev.target.closest('.ws-col[data-ws-col="today"]');
+    // Dropping something back where it came from is not an edit.
+    return (col && held && held.kind !== 'today') ? col : null;
+  }
+
+  document.addEventListener('dragover', function (ev) {
+    const col = target(ev);
+    if (!col) return;
+    ev.preventDefault();                       // without this, drop never fires
+    ev.dataTransfer.dropEffect = 'copy';
+    col.classList.add('ws-col--over');
+  });
+
+  document.addEventListener('dragleave', function (ev) {
+    const col = ev.target.closest('.ws-col');
+    if (col) col.classList.remove('ws-col--over');
+  });
+
+  document.addEventListener('drop', function (ev) {
+    const col = target(ev);
+    if (!col) return;
+    ev.preventDefault();
+    col.classList.remove('ws-col--over');
+    const it = held; held = null;
+    if (!it) return;
+
+    let url, body;
+    if (it.kind === 'project') {
+      url = '/api/today/plan/add';
+      body = new URLSearchParams({ kind: 'project', project_id: it.id, days: '1' });
+    } else if (it.kind === 'reading') {
+      url = '/api/stack/crucial';
+      body = new URLSearchParams({ kind: it.sub || 'news', item_id: it.id,
+                                   back: 'today-reading' });
+    } else if (it.kind === 'learning') {
+      url = '/api/today/plan/lesson';
+      body = new URLSearchParams({ slug: it.id, title: it.label || '',
+                                   lesson: it.sub || '' });
+    } else { return; }
+
+    fetch(url, { method: 'POST', body: body })
+      .then(r => {
+        if (!r.ok) throw new Error(r.status);
+        // Redraw both ends: the plan gained a row, the stack re-sorted.
+        if (window.htmx) {
+          htmx.ajax('GET', '/api/partial/today/plan', { target: '#today-plan', swap: 'outerHTML' });
+          // Only the panel that actually changed. Redrawing the stack after a
+          // course drop is a request against something that did not move.
+          if (it.kind === 'reading') {
+            htmx.ajax('GET', '/api/partial/today/reading', { target: '.rstack-panel', swap: 'outerHTML' });
+          }
+        }
+        if (typeof showToast === 'function') {
+          showToast(`<i class="bi bi-check2 toast-icon"></i>${it.label || 'Added'} → today`);
+        }
+      })
+      .catch(() => {
+        if (typeof showToast === 'function') showToast('Could not add that to today.');
+      });
+  });
+})();
+
+// ─── Presentation ────────────────────────────────────────────────────────────
+// Two handlers, both deliberately thin. The surface's work happens server-side;
+// these exist because a scan takes minutes and a brief goes on the clipboard.
+
+async function rescanDecks(btn) {
+  // A scan walks a large synced folder. Saying "a few minutes" and then leaving
+  // a button looking clickable is how someone presses it four times, so the
+  // button states what is happening and refuses to start a second one.
+  if (btn) { btn.disabled = true; btn.dataset.was = btn.textContent; btn.textContent = 'Indexing… this takes a few minutes'; }
+  try {
+    const res = await fetch('/api/presentation/rescan', { method: 'POST' });
+    const d = await res.json();
+    if (d.status === 'ok') {
+      showToast('<i class="bi bi-check2 toast-icon"></i>Presentations indexed — reloading');
+      setTimeout(() => window.location.reload(), 900);
+      return;
+    }
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (d.message || 'The scan did not finish.'));
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Could not reach Metis — the scan did not run.');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = btn.dataset.was || 'Index my presentations'; }
+}
+
+async function buildPresentationBrief(form) {
+  // Returns false unconditionally: this is a submit handler on a form with no
+  // action, and letting it through would navigate away from the surface.
+  try {
+    const res = await fetch('/api/presentation/brief', {
+      method: 'POST', body: new FormData(form),
+    });
+    const d = await res.json();
+    const out = document.getElementById('pb-out');
+    if (out) {
+      out.textContent = d.brief || '';
+      out.hidden = !d.brief;
+    }
+    if (d.brief && navigator.clipboard) {
+      await navigator.clipboard.writeText(d.brief);
+      showToast('<i class="bi bi-clipboard-check toast-icon"></i>Brief on your clipboard'
+        + (d.n_prior > 1 ? ` — including what changed across ${d.n_prior} previous deliveries` : ''));
+    }
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Could not assemble the brief.');
+  }
+  return false;
+}
+
+// ─── Brainstorm: choose the material, then go ────────────────────────────────
+// Selection lives in the checkboxes — one source of truth. The chart reflects
+// them and can drive them, but never holds state of its own: two stores for one
+// answer is how a picker comes to disagree with the prompt it produces.
+
+function _bsSync() {
+  const form = document.getElementById('bs-form');
+  if (!form) return [];
+  const on = [];
+  form.querySelectorAll('input[name="pick"]').forEach(cb => {
+    if (cb.checked) on.push(cb.value);
+    const row = cb.closest('.bs-item');
+    if (row) row.classList.toggle('is-on', cb.checked);
+    document.querySelectorAll(`[data-pick="${CSS.escape(cb.value)}"]`).forEach(n => {
+      n.classList.toggle('is-on', cb.checked);
+      n.setAttribute('aria-checked', String(cb.checked));
+    });
+    document.querySelectorAll(`[data-for="${CSS.escape(cb.value)}"]`).forEach(e => {
+      e.classList.toggle('is-on', cb.checked);
+    });
+  });
+  const c = document.getElementById('bs-count');
+  if (c) c.textContent = on.length ? `${on.length} chosen` : 'nothing chosen';
+  return on;
+}
+
+document.addEventListener('change', ev => {
+  if (ev.target && ev.target.name === 'pick') _bsSync();
+});
+
+// Clicking a dot toggles its checkbox, which then drives everything.
+document.addEventListener('click', ev => {
+  const node = ev.target.closest('.bs-node[data-pick]');
+  if (!node) return;
+  const cb = document.querySelector(
+    `#bs-form input[name="pick"][value="${CSS.escape(node.dataset.pick)}"]`);
+  if (cb) { cb.checked = !cb.checked; _bsSync(); }
+});
+document.addEventListener('keydown', ev => {
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  const node = ev.target.closest && ev.target.closest('.bs-node[data-pick]');
+  if (!node) return;
+  ev.preventDefault();
+  node.click();
+});
+
+function bsToggleAll(btn) {
+  const form = document.getElementById('bs-form');
+  if (!form) return;
+  const boxes = [...form.querySelectorAll('input[name="pick"]')];
+  const turnOn = boxes.some(b => !b.checked);
+  boxes.forEach(b => { b.checked = turnOn; });
+  btn.textContent = turnOn ? 'select none' : 'select all';
+  _bsSync();
+}
+
+async function startBrainstorm(form) {
+  const picked = _bsSync();
+  const body = new URLSearchParams({
+    mode: form.mode.value, ref: form.ref.value,
+    level: form.level.value, picked: picked.join('|'),
+  });
+  try {
+    const res = await fetch('/api/reflection/brainstorm/prompt',
+                            { method: 'POST', body });
+    const d = await res.json();
+    if (!d.prompt) throw new Error('empty');
+    // Same two-step the other launchers use: the clipboard is the reliable
+    // path, the deep link is the convenient one. If the handler is not
+    // registered the clipboard still has it, so the click is never wasted.
+    _openInClaude(d.prompt);
+    showToast(`<i class="bi bi-lightbulb toast-icon"></i>Brainstorm opening — `
+      + (d.n ? `${d.n} item${d.n === 1 ? '' : 's'} carried in` : 'no material chosen')
+      + `; prompt copied`);
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Could not assemble the brainstorm.');
+  }
+  return false;
+}
+
+// ─── Seeding a focus from a project or a course ──────────────────────────────
+// It fills the form and stops. The form owns the preview and the structured
+// keyword groups, so a path that wrote a focus directly would create lenses
+// nobody had seen the catch for.
+
+let _fseedLoaded = false;
+
+async function focusSeedWay(way, btn) {
+  document.querySelectorAll('[data-seed-way]').forEach(b =>
+    b.classList.toggle('is-on', b === btn));
+  const picker = document.getElementById('fseed-picker');
+  if (!picker) return;
+  picker.hidden = (way !== 'from');
+  if (way !== 'from' || _fseedLoaded) return;
+
+  try {
+    const res = await fetch('/api/focus/seed-options');
+    const d = await res.json();
+    const fill = (id, rows, kind) => {
+      const host = document.getElementById(id);
+      if (!host) return;
+      host.innerHTML = '';
+      if (!rows || !rows.length) {
+        host.innerHTML = '<span class="fseed-none">none</span>';
+        return;
+      }
+      rows.forEach(r => {
+        // TWO THINGS A SHELF SLOT CAN BE, offered side by side rather than
+        // hidden behind a mode: make a lens ABOUT it, or put the thing ITSELF
+        // there. They are different intentions and neither is the obvious
+        // default, so the interface asks rather than guesses.
+        const wrap = document.createElement('span');
+        wrap.className = 'fseed-pair';
+
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'fseed-chip';
+        b.textContent = r.title;
+        b.title = 'Seed a lens about this — stay current on the subject';
+        b.onclick = () => focusSeedFrom(kind, r.ref, b);
+        wrap.appendChild(b);
+
+        const d = document.createElement('button');
+        d.type = 'button';
+        d.className = 'fseed-direct';
+        d.textContent = 'open it';
+        d.title = `Put the ${kind} itself on the shelf — clicking it opens the ${kind}`;
+        d.onclick = () => focusShortcut(kind, r.ref);
+        wrap.appendChild(d);
+
+        host.appendChild(wrap);
+      });
+    };
+    fill('fseed-courses', d.courses, 'course');
+    fill('fseed-projects', d.projects, 'project');
+    _fseedLoaded = true;
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Could not read your projects and courses.');
+  }
+}
+
+async function focusSeedFrom(kind, ref, btn) {
+  try {
+    const res = await fetch(`/api/focus/seed?kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`);
+    const d = await res.json();
+    if (d.status !== 'ok') throw new Error(d.message || 'seed failed');
+
+    const form = document.getElementById('focus-create-form');
+    if (!form) return;
+    const set = (name, value) => {
+      const el = form.querySelector(`[name="${name}"]`);
+      if (!el) return;
+      el.value = value || '';
+      // The preview listens for `change`, not for a value assigned by script —
+      // an input set programmatically fires nothing at all, so the lens would
+      // have sat empty beside a filled form and read as a lens that catches
+      // nothing.
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    set('title', d.title);
+    set('subtitle', d.subtitle);
+    set('group1', d.group1);
+    set('group2', d.group2);
+
+    document.querySelectorAll('.fseed-chip').forEach(c =>
+      c.classList.toggle('is-on', c === btn));
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    showToast('<i class="bi bi-magic toast-icon"></i>Seeded from your ' + kind
+      + ' — edit the boxes and watch the preview');
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Could not seed from that.');
+  }
+}
+
+async function focusShortcut(kind, ref) {
+  // Puts the thing itself on the shelf. No lens, no keywords — clicking the
+  // slot opens the course or the project.
+  try {
+    const res = await fetch('/api/focus/shortcut', {
+      method: 'POST',
+      body: new URLSearchParams({ kind: kind, ref: ref }),
+    });
+    const d = await res.json();
+    if (d.status === 'ok') {
+      showToast('<i class="bi bi-bookmark-check toast-icon"></i>' + d.message);
+      setTimeout(() => window.location.reload(), 900);
+      return;
+    }
+    // A full shelf is a decision for the reader, not an error to shrug at — the
+    // server says which three are on it so the choice can be made from the message.
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>' + (d.message || 'Could not add that.'));
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Could not reach Metis.');
+  }
+}
+
+async function openDeck(deckId, what) {
+  // Opens the file, or shows it in its folder. The server owns the path
+  // translation and the interop check — a second copy here would drift the
+  // first time WSL interop broke.
+  try {
+    const res = await fetch('/api/presentation/open', {
+      method: 'POST',
+      body: new URLSearchParams({ deck_id: deckId, what: what || 'deck' }),
+    });
+    const d = await res.json();
+    showToast((d.status === 'ok' ? '<i class="bi bi-box-arrow-up-right toast-icon"></i>'
+                                 : '<i class="bi bi-exclamation-circle toast-icon"></i>')
+              + (d.message || ''));
+  } catch (e) {
+    showToast('<i class="bi bi-exclamation-circle toast-icon"></i>Could not reach Metis.');
+  }
+}

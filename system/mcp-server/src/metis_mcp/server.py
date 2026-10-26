@@ -1,0 +1,334 @@
+"""MCP server bootstrap, tool registration, and main entry point.
+
+WhatsApp webhook runs as a separate FastAPI process (see webhook.py).
+Start with: uvicorn metis_mcp.webhook:app --port 8000
+"""
+
+# ── Load system/.env FIRST ───────────────────────────────────────────────────
+# Must happen before any tool module is imported: tools read os.environ (notably
+# ANTHROPIC_API_KEY) at import and call time. The dashboard's run.sh sourced
+# system/.env; the MCP server's never did — so inside this process the API key was
+# simply absent, and every Claude-API feature silently took its degraded path
+# rather than failing. See config.load_env_file() for the full story.
+from metis_mcp.config import load_env_file as _load_env_file
+from metis_mcp.config import use_system_certificates as _use_system_certificates
+
+_LOADED_ENV = _load_env_file()
+_use_system_certificates()
+
+# Use the shared app instance to avoid split registrations across tool modules.
+# All tool modules should import `app` from either server.py or app_instance.py —
+# both now point to the same object.
+from metis_mcp.app_instance import app  # noqa: E402,F401
+
+# ── Resilient tool loading ───────────────────────────────────────────────────
+# Each tool module registers handlers via @app.tool() on import. Historically
+# these were imported atomically (`from metis_mcp.tools import a, b, c, ...`),
+# which meant ONE module with a bad import (missing optional dep, syntax error)
+# took down the ENTIRE server — no tools at all. Now each module loads in
+# isolation: a failure is logged and skipped, the rest of the server still works.
+import importlib as _importlib
+import logging as _logging
+
+_log = _logging.getLogger("metis")
+
+# Order matters only for readability — registration is independent per module.
+TOOL_MODULES = [
+    "agents", "literature", "notes", "projects", "reviews", "tasks", "ideas",
+    "safety", "files", "intelligence", "library", "config_tools", "images",
+    "thinking_profile", "self_improvement", "transcription", "memory", "pipeline",
+    "vector_memory", "guardrails", "knowledge_graph", "observability",
+    "anonymization", "backup", "brainstorm", "data_tools", "handoff", "improvement",
+    "observation", "content_scan", "zotero", "doctor", "ref_miner", "fulltext_index",
+    "user_profile", "literature_monitor", "meetings", "course_builder",
+    "paperqa_search", "voice_capture", "knowledge_db", "background_packs", "decisions_ledger", "office", "session_memory",
+    "memory_curator", "memory_gateway", "research", "research_timeline", "project_tracker", "dhis2",
+    "discovery", "code_repository", "script_analyzer", "tool_search", "prompts",
+    # ACCOUNTS — which account (work/personal) each project pushes and publishes to.
+    "accounts",
+    # MCP RESOURCES — the third protocol primitive, unused until 2026-08-21.
+    # Tools let the model act, prompts let the user pick, resources let the
+    # CLIENT attach standing context. Without them Claude Desktop had no way
+    # to see the persona, the learned-lesson ledger or the corpus at all —
+    # those live in files only Claude Code reads.
+    "resources",
+    # AUTHORING — the tools that let Metis MAKE things. Of 236 tools, three
+    # could write a file and all three wrote config; none could produce a
+    # document. Claude Code hid that gap by supplying Write/Edit/Bash itself.
+    # Desktop, Cursor and every other MCP client had no substitute.
+    "authoring",
+    # MAINTENANCE — named operations for clients with no shell. A whitelist,
+    # never run_command(): a model-driven RCE tool on a machine holding
+    # research data is not made safe by careful prompting.
+    "maintenance",
+    # news_threads is listed explicitly even though intelligence.py imports it:
+    # relying on another module's import chain meant a change there could silently
+    # unregister the whole story-thread layer, and this list is where module
+    # loading is meant to be visible.
+    "news_threads", "continuity", "persona_growth",
+    # VERIFICATION — the other half of the grounding promise. Retrieval was
+    # enforced by a hook from 2026-08; nothing checked a citation after it was
+    # written, so "never invented" rested on six prompts saying "do not
+    # hallucinate". Contains no model on purpose: the checker has to be less
+    # fallible than the thing it checks.
+    "verification",
+    # EVIDENCE — the other half of fact-checking. `verification` asks whether a
+    # citation points where it claims; this asks what the evidence actually says.
+    # A number can be perfectly cited and still be one of many the literature
+    # reports: this corpus holds specificity estimates from 59% to 100%, and a
+    # single confident answer hides that completely.
+    "evidence",
+    # FOCUS — user-defined surfaces for a subject you want to stay current on.
+    # A lens, never a container: it owns a query, not the content it shows.
+    "focus",
+    # NATURE BRIEFING — the editorial digests, as EDITIONS rather than a wire
+    # feed. Reached through the public Mailchimp campaign archive that every
+    # issue links to in its own footer; one feed carries every variant, told
+    # apart by the masthead alt text.
+    "briefings",
+    # READING STACK — one triage store for everything that arrives: news,
+    # papers, anything. Before it, papers had triage on the Library surface and
+    # News had none at all — seven tabs, 337 links, zero actions — so "read it
+    # later" existed as an intention with nowhere to put it.
+    "stack",
+    # AGENT MEMORY — standing decisions per specialist. Without it,
+    # get_agent_context returned a persona and nothing about how the researcher
+    # wants things done, so routing to an agent added nothing.
+    "agent_memory",
+    # VIZ LIBRARY — saved visual styles and reusable figure methods, as ROWS.
+    # Visualization Maker advertised "7 visual styles" and "14 diagram types" in
+    # prose, in its own prompt file: a list nobody could append to by saying "I
+    # like this", that recorded nothing about which style was used where, and
+    # that kept method and look fused so neither could be reused without the
+    # other. `outputs/visualizations/` held one file after three months.
+    "viz_library",
+    # INSTITUTION PACK — an edition's institute templates, procedures and
+    # actions (packs/<id>/pack.json). Inert without an edition that names one.
+    "pack",
+]
+
+LOADED_MODULES: list[str] = []
+FAILED_MODULES: dict[str, str] = {}
+# An edition (system/config/edition.json) can switch modules off. Skipped, not
+# failed: a module an edition leaves out is a decision, not a fault.
+from metis_mcp.edition import module_on as _module_on  # noqa: E402
+EDITION_SKIPPED: list[str] = [m for m in TOOL_MODULES if not _module_on(m)]
+
+for _name in TOOL_MODULES:
+    if _name in EDITION_SKIPPED:
+        continue
+    try:
+        _importlib.import_module(f"metis_mcp.tools.{_name}")
+        LOADED_MODULES.append(_name)
+    except Exception as _exc:  # noqa: BLE001 — never let one module crash startup
+        FAILED_MODULES[_name] = f"{type(_exc).__name__}: {_exc}"
+        _log.error("Tool module '%s' failed to load (skipped): %s", _name, _exc)
+
+if FAILED_MODULES:
+    _log.warning(
+        "%d/%d tool modules loaded; %d skipped: %s",
+        len(LOADED_MODULES), len(TOOL_MODULES), len(FAILED_MODULES),
+        ", ".join(FAILED_MODULES),
+    )
+
+
+# ── Domain-specific tool loading ─────────────────────────────────────────────
+# ── Tool-dispatch guard ──────────────────────────────────────────────────────
+# Installed AFTER every tool module has registered, and it wraps FastMCP.call_tool
+# — the single funnel all 213 tools pass through. Before this, the Data Guardian
+# only inspected the `run_metis` request string and the other ~212 tools were
+# callable straight around it: "a front-door mat in a building with 212 side
+# doors". Guarding at the dispatch point means a tool cannot opt out, and a tool
+# written next year is covered without anyone remembering to wire it in.
+from metis_mcp import middleware as _middleware  # noqa: E402
+
+_middleware.install(app)
+
+# When METIS_TOOL_SUBSETS=1 and METIS_AGENT_SUBSET=<slug> are set, strip tools
+# not in the agent's declared subset. This reduces the tools/list token cost
+# by 50–80% for targeted agent sessions.
+#
+# Example (from run.sh or a per-agent launcher):
+#   METIS_TOOL_SUBSETS=1 METIS_AGENT_SUBSET=librarian python -m metis_mcp.server
+import os as _os
+
+# Tool subset loading — active by default when METIS_TOOL_SUBSETS=1 (set in run.sh).
+# Pass METIS_TOOL_SUBSETS=0 to load all tools (developer / debug mode).
+# When METIS_AGENT_SUBSET is not set, the "_default" subset from tool-subsets.json is used.
+if _os.environ.get("METIS_TOOL_SUBSETS", "0") == "1":
+    _agent = _os.environ.get("METIS_AGENT_SUBSET", "_default").strip() or "_default"
+    from metis_mcp.subset_loader import apply_tool_subset
+    _removed = apply_tool_subset(app, _agent)
+    import logging as _logging
+    _logging.getLogger("metis").info(
+        "Tool subset active: agent=%s, %d tools removed, %d exposed",
+        _agent, _removed, len(app._tool_manager._tools),
+    )
+
+# ── Progressive tool disclosure ("tool search") ──────────────────────────────
+# When METIS_TOOL_SEARCH=1, park all non-core tools so the session loads a small
+# everyday set; the rest are retrieved on demand via find_tools()/load_tool_group().
+# Inert when the flag is unset. Runs AFTER subset filtering so the two compose.
+# See tool_search.py and the "core"/"groups" keys in config/tool-subsets.json.
+if _os.environ.get("METIS_TOOL_SEARCH", "0") == "1":
+    try:
+        from metis_mcp.tools.tool_search import partition_tools
+        _parked = partition_tools(app)
+        import logging as _logging2
+        _logging2.getLogger("metis").info(
+            "Tool search active: %d tools parked, %d exposed (core + meta).",
+            _parked, len(app._tool_manager._tools),
+        )
+    except Exception as _exc:  # never let this break startup
+        import logging as _logging2
+        _logging2.getLogger("metis").error("Tool search setup failed (skipped): %s", _exc)
+
+
+def _startup_selfcheck() -> None:
+    """Run a fast health self-check at server start and log a clear summary.
+
+    Never raises — diagnostics must not block the server. Writes a machine-readable
+    health snapshot to system/config/mcp-health.json so the dashboard / installer
+    can show whether the last server start was healthy.
+    """
+    log = _logging.getLogger("metis")
+    # 1) Tool-load summary (from the resilient loader above)
+    try:
+        tool_count = len(getattr(app, "_tool_manager")._tools) if hasattr(app, "_tool_manager") else 0
+    except Exception:
+        tool_count = 0
+    log.info("Metis MCP: %d/%d tool modules loaded, %d tools registered.",
+             len(LOADED_MODULES), len(TOOL_MODULES), tool_count)
+
+    # 2) Environment health via the doctor checks
+    report = {"status": "unknown", "checks": []}
+    try:
+        from metis_mcp.tools.doctor import run_doctor
+        report = run_doctor()
+        fails = [c["name"] for c in report.get("checks", []) if not c.get("ok") and c.get("severity") == "fail"]
+        warns = [c["name"] for c in report.get("checks", []) if not c.get("ok") and c.get("severity") == "warn"]
+        if fails:
+            log.error("Metis MCP startup health: FAIL — %s", ", ".join(fails))
+        elif warns:
+            log.warning("Metis MCP startup health: WARN — %s", ", ".join(warns))
+        else:
+            log.info("Metis MCP startup health: OK — all checks passed.")
+    except Exception as exc:
+        log.warning("Metis MCP self-check could not run: %s", exc)
+
+    # 3) Stale-install detection — the failure mode from 2026-06-01: the server runs
+    #    an installed COPY of the package, so source edits don't take effect until
+    #    reinstall.
+    #
+    #    This used to compare MTIMES, and that quietly failed on 2026-08-24. Metis
+    #    runs on two computers and syncs its source over OneDrive, which preserves
+    #    the ORIGINAL write time — so files edited on the other machine arrived here
+    #    stamped *older* than a local install performed days later. Source was newer
+    #    in content and older in mtime, the check said "fine", and the server ran
+    #    old code missing three whole tool modules (authoring, maintenance,
+    #    resources) that the dashboard could see and the MCP server could not.
+    #
+    #    So: no second opinion. `run_doctor()` already compares file CONTENTS with
+    #    filecmp, which no clock skew can fool. Read its verdict instead of
+    #    re-deriving a weaker one — a duplicated guarantee decays to its weakest copy.
+    try:
+        stale_check = next(
+            (c for c in report.get("checks", [])
+             if c.get("name") == "MCP install is current"), None)
+        if stale_check is not None and not stale_check.get("ok"):
+            log.warning("Metis MCP is running STALE installed code — %s",
+                        stale_check.get("detail", ""))
+            report["stale_install"] = True
+    except Exception:
+        pass
+
+    # 4) Persist a health snapshot (best-effort)
+    try:
+        import json
+        from metis_mcp.config import paths as _paths
+        hp = _paths.root / "system" / "config" / "mcp-health.json"
+        hp.parent.mkdir(parents=True, exist_ok=True)
+        snapshot = {
+            "checked_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+            "status": report.get("status", "unknown"),
+            "tools_registered": tool_count,
+            "modules_loaded": len(LOADED_MODULES),
+            "modules_failed": FAILED_MODULES,
+            "stale_install": report.get("stale_install", False),
+        }
+        hp.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _configure_logging() -> None:
+    """Record the 'metis' logger's INFO+ lines to a rotating file (Keystone P0.6).
+
+    The MCP server had no logging configuration, so the startup health verdict and
+    the stale-install / failed-module warnings were emitted at INFO to a logger with
+    no handler — and vanished. Attach a rotating FILE handler (never stdout: that is
+    the MCP stdio JSON-RPC channel). propagate stays on, so WARNING+ still reach
+    stderr via the root lastResort for whoever watches the server's stderr.
+    """
+    log = _logging.getLogger("metis")
+    if getattr(log, "_metis_file_configured", False):
+        return
+    try:
+        import os
+        from pathlib import Path
+        from logging.handlers import RotatingFileHandler
+
+        log_dir = Path(
+            os.environ.get("METIS_DATA_DIR")
+            or (Path.home() / ".local" / "share" / "metis-mcp")
+        )
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            log_dir / "mcp.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+        )
+        handler.setFormatter(
+            _logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        log.addHandler(handler)
+        log.setLevel(_logging.INFO)
+        log._metis_file_configured = True  # type: ignore[attr-defined]
+    except Exception:
+        pass  # logging must never break startup
+
+
+def run():
+    _configure_logging()
+    # Apply any pending schema migrations BEFORE serving tools.
+    # See metis_mcp/migrations.py — this is what prevented us from ever
+    # repeating the brainstorm_sessions title-vs-topic drift from R8 (2026-05-25).
+    try:
+        from metis_mcp.migrations import run_on_default_db
+        result = run_on_default_db()
+        log = _logging.getLogger("metis")
+        if result["applied"]:
+            log.info("Schema migrations applied: %s", ", ".join(result["applied"]))
+        if result["errors"]:
+            log.warning("Schema migrations skipped with errors: %s", result["errors"])
+    except Exception as _exc:
+        # Don't block server start if migrations module fails to import.
+        _logging.getLogger("metis").warning("Schema migration check failed: %s", _exc)
+
+    # Self-diagnose in the BACKGROUND (Keystone P0.3). The self-check runs run_doctor()
+    # — filecmp over every source file, markdown globs, socket probes — all slow on
+    # DrvFs. Running it synchronously here put it on the MCP initialize/handshake path,
+    # where a cold start could exceed Claude Desktop's connect timeout and mark the
+    # server failed. The health snapshot it writes is read after the fact, so it does
+    # not need to finish before we start serving tools.
+    try:
+        import threading as _threading
+        _threading.Thread(
+            target=_startup_selfcheck, name="metis-selfcheck", daemon=True
+        ).start()
+    except Exception as _exc:
+        _logging.getLogger("metis").warning("Startup self-check thread failed to start: %s", _exc)
+
+    app.run()
+
+
+if __name__ == "__main__":
+    run()

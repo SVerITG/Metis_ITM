@@ -1,0 +1,24 @@
+<!-- learning_competencies.html — Editorial competency map -->
+{% if not skills %}
+<div class="empty-row"><em>No competencies tracked yet.</em></div>
+{% else %}
+{% set current_domain = namespace(value='') %}
+<div class="panel">
+  {% for s in skills %}
+  {% if s.domain != current_domain.value %}
+  {% set current_domain.value = s.domain %}
+  <div class="kicker kicker--accent" style="padding:14px 20px 6px;{% if not loop.first %}border-top:1px solid var(--m-rule-soft);{% endif %}">
+    <span>{{ s.domain | upper }}</span>
+  </div>
+  {% endif %}
+  <div style="display:grid;grid-template-columns:1fr auto;gap:var(--m-space-4);align-items:center;padding:var(--m-space-2) var(--m-space-5);">
+    <div class="u-title">{{ s.name }}</div>
+    <div style="display:flex;gap:var(--m-space-1);">
+      {% for i in range(5) %}
+      <div style="width:7px;height:7px;border-radius:50%;background:{% if i < (s.level or 0) %}var(--m-accent){% else %}var(--m-surface-3){% endif %};"></div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

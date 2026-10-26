@@ -1,0 +1,101 @@
+{# today_memory_landscape.html — Topic map: circles by memory density, colored by recency.
+   Context: topics (list), edges (list), projects (list), topics_json (str). #}
+{% if topics %}
+<div class="u-mb-6" id="memory-landscape">
+  <h2 class="sec-label u-mb-3">
+    <span>Memory landscape</span>
+    <span class="tail">{{ topics|length }} TOPICS &middot; SIZED BY DEPTH &middot; COLORED BY FRESHNESS</span>
+  </h2>
+  <div class="panel panel--lg">
+
+    {# Topic bubble grid — CSS-only, no D3 needed for this view #}
+    <div class="u-mb-5" style="display:flex;flex-wrap:wrap;gap:var(--m-space-3);justify-content:center;">
+      {% set max_count = topics[0].count if topics else 1 %}
+      {% set recency_colors = {
+        'fresh': 'var(--m-chart-2)',
+        'recent': 'var(--m-chart-1)',
+        'aging': 'var(--m-chart-4)',
+        'stale': 'var(--m-chart-8)'
+      } %}
+      {% set recency_bg = {
+        'fresh': 'color-mix(in srgb, var(--m-chart-2) 12%, transparent)',
+        'recent': 'color-mix(in srgb, var(--m-chart-1) 10%, transparent)',
+        'aging': 'color-mix(in srgb, var(--m-chart-4) 10%, transparent)',
+        'stale': 'color-mix(in srgb, var(--m-chart-8) 8%, transparent)'
+      } %}
+      {% for t in topics %}
+      {% set scale = (t.count / max_count) if max_count > 0 else 0.2 %}
+      {% set size = 40 + (scale * 60)|int %}
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+        width:{{ size }}px;height:{{ size }}px;
+        border-radius:50%;
+        background:{{ recency_bg.get(t.recency, 'color-mix(in srgb, var(--m-chart-8) 8%, transparent)') }};
+        border:2px solid {{ recency_colors.get(t.recency, 'var(--m-chart-8)') }};
+        cursor:default;transition:transform .15s;position:relative;"
+        title="{{ t.name }}: {{ t.count }} memories, last seen {{ t.age_days }}d ago ({{ t.recency }})"
+        onmouseover="this.style.transform='scale(1.1)';this.style.zIndex='10'"
+        onmouseout="this.style.transform='scale(1)';this.style.zIndex='0'">
+        <span style="font-family:var(--m-mono);font-size:{% if size >= 80 %}10{% elif size >= 60 %}9{% else %}7.5{% endif %}px;
+          letter-spacing:0.06em;color:{{ recency_colors.get(t.recency, 'var(--m-chart-8)') }};
+          text-align:center;line-height:1.2;max-width:{{ size - 8 }}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          {{ t.name[:18] }}
+        </span>
+        <span style="font-family:var(--m-mono);font-size:{% if size >= 60 %}8{% else %}7{% endif %}px;color:var(--m-muted);margin-top:1px;">{{ t.count }}</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    {# Legend #}
+    <div class="u-rule-t" style="display:flex;flex-wrap:wrap;gap:var(--m-space-4);padding-top:14px;">
+      <div class="u-row" style="gap:var(--m-space-1);">
+        <span style="width:10px;height:10px;border-radius:50%;border:2px solid var(--m-chart-2);background:color-mix(in srgb, var(--m-chart-2) 12%, transparent);"></span>
+        <span class="u-label" style="letter-spacing:0.06em;">Fresh (&lt;7d)</span>
+      </div>
+      <div class="u-row" style="gap:var(--m-space-1);">
+        <span style="width:10px;height:10px;border-radius:50%;border:2px solid var(--m-chart-1);background:color-mix(in srgb, var(--m-chart-1) 10%, transparent);"></span>
+        <span class="u-label" style="letter-spacing:0.06em;">Recent (&lt;30d)</span>
+      </div>
+      <div class="u-row" style="gap:var(--m-space-1);">
+        <span style="width:10px;height:10px;border-radius:50%;border:2px solid var(--m-chart-4);background:color-mix(in srgb, var(--m-chart-4) 10%, transparent);"></span>
+        <span class="u-label" style="letter-spacing:0.06em;">Aging (&lt;90d)</span>
+      </div>
+      <div class="u-row" style="gap:var(--m-space-1);">
+        <span style="width:10px;height:10px;border-radius:50%;border:2px solid var(--m-chart-8);background:color-mix(in srgb, var(--m-chart-8) 8%, transparent);"></span>
+        <span class="u-label" style="letter-spacing:0.06em;">Stale (&gt;90d)</span>
+      </div>
+      <div class="u-row" style="gap:var(--m-space-1);margin-left:auto;">
+        <span class="u-label" style="letter-spacing:0.06em;">Size = memory count</span>
+      </div>
+    </div>
+
+    {# Project memory depth (if we have projects) #}
+    {% if projects %}
+    <div class="u-rule-t" style="margin-top:var(--m-space-5);padding-top:16px;">
+      <div class="u-label u-mb-3">PROJECT MEMORY DEPTH</div>
+      <div class="u-col" style="gap:var(--m-space-2);">
+        {% for p in projects %}
+        {% set mem = p.memory %}
+        <div class="u-row" style="gap:var(--m-space-3);">
+          <span style="width:6px;height:6px;border-radius:50%;flex-shrink:0;
+            background:{% if mem.level == 'deep' %}var(--m-chart-2){% elif mem.level == 'moderate' %}var(--m-chart-1){% else %}var(--m-chart-8){% endif %};"></span>
+          <span class="u-grow u-truncate u-title u-title--sm">{{ p.title }}</span>
+          <span style="font-family:var(--m-mono);font-size:11px;letter-spacing:0.06em;
+            color:{% if mem.level == 'deep' %}var(--m-chart-2){% elif mem.level == 'moderate' %}var(--m-chart-1){% else %}var(--m-chart-8){% endif %};">
+            {{ mem.total }} memories &middot; {{ mem.level }}
+          </span>
+          {# Mini bar #}
+          {% set bar_width = ((mem.total / 50) * 100)|int %}
+          {% if bar_width > 100 %}{% set bar_width = 100 %}{% endif %}
+          {% if bar_width < 4 %}{% set bar_width = 4 %}{% endif %}
+          <div class="u-fixed" style="width:60px;height:4px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);">
+            <div style="width:{{ bar_width }}%;height:100%;border-radius:2px;
+              background:{% if mem.level == 'deep' %}var(--m-chart-2){% elif mem.level == 'moderate' %}var(--m-chart-1){% else %}var(--m-chart-8){% endif %};"></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

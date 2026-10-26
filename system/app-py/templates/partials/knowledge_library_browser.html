@@ -1,0 +1,216 @@
+<style>
+.lib-chip {
+  padding: 3px 10px;
+  font-family: var(--m-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid var(--m-rule);
+  border-radius: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+  background: var(--m-surface-2);
+  color: var(--m-muted);
+  transition: background 0.1s, color 0.1s;
+}
+.lib-chip:hover { background: var(--m-surface-3); }
+.lib-chip.active { background: var(--m-accent); color: var(--m-on-accent); border-color: var(--m-accent); }
+.lib-field-label {
+  font-family: var(--m-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--m-muted);
+  margin-bottom: 4px;
+}
+.lib-input {
+  width: 100%;
+  font-family: var(--m-ui);
+  font-size: 13px;
+  padding: 8px 12px;
+  background: var(--m-surface-2);
+  border: 1px solid var(--m-rule);
+  border-radius: var(--m-radius);
+  color: var(--m-ink);
+  
+}
+.lib-input:focus { border-color: var(--m-accent); }
+.lib-select {
+  font-family: var(--m-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 8px 10px;
+  background: var(--m-surface-2);
+  border: 1px solid var(--m-rule);
+  border-radius: var(--m-radius);
+  color: var(--m-ink);
+  
+  cursor: pointer;
+}
+</style>
+
+<div id="lib-browser-section">
+  <h2 class="sec-label u-mb-3">
+    <span>Literature Library</span>
+    <span class="tail">{{ total }} PAPERS</span>
+  </h2>
+
+  <div class="panel panel--clip">
+
+    <!-- ── Row 1: Search + Sort ── -->
+    <div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5) var(--m-space-3);display:flex;gap:var(--m-space-2);align-items:flex-end;flex-wrap:wrap;">
+
+      <!-- Search bar -->
+      <div class="u-grow" style="min-width:220px;">
+        <div class="lib-field-label">Search</div>
+        <input
+          id="lib-q"
+          name="q"
+          type="search"
+          placeholder="Search title, author, abstract…"
+          value="{{ q }}"
+          autocomplete="off"
+          hx-get="/api/partial/knowledge/library-table"
+          hx-trigger="keyup changed delay:350ms"
+          hx-target="#lib-table-area"
+          hx-swap="outerHTML"
+          hx-include="#lib-hidden-fields"
+          class="lib-input" aria-label="Search title, author, abstract">
+      </div>
+
+      <!-- Sort -->
+      <div style="min-width:160px;">
+        <div class="lib-field-label">Sort by</div>
+        <select id="lib-sort" name="sort" class="lib-select"
+                onchange="_refreshLibTable()">
+          <option value="newest"  {% if active_sort == 'newest'  %}selected{% endif %}>Newest first</option>
+          <option value="oldest"  {% if active_sort == 'oldest'  %}selected{% endif %}>Oldest first</option>
+          <option value="title"   {% if active_sort == 'title'   %}selected{% endif %}>Title A–Z</option>
+          <option value="author"  {% if active_sort == 'author'  %}selected{% endif %}>Author A–Z</option>
+          <option value="added"   {% if active_sort == 'added'   %}selected{% endif %}>Recently added</option>
+        </select>
+      </div>
+
+      <!-- Read state -->
+      <div style="min-width:120px;">
+        <div class="lib-field-label">Show</div>
+        <select id="lib-read-state" name="read_state" class="lib-select"
+                onchange="_refreshLibTable()">
+          <option value="">Everything</option>
+          <option value="unread">Unread only</option>
+          <option value="read">Read only</option>
+        </select>
+      </div>
+
+      <!-- Year from -->
+      <div style="width:74px;">
+        <div class="lib-field-label">From</div>
+        <input class="u-mono u-tile" id="lib-year-from" name="year_from" type="number" min="1980" max="2030"
+               placeholder="2000"
+               style="width:100%;padding:var(--m-space-2) var(--m-space-2);color:var(--m-ink);"
+               onchange="_refreshLibTable()" aria-label="2000">
+      </div>
+
+      <!-- Year to -->
+      <div style="width:74px;">
+        <div class="lib-field-label">To</div>
+        <input class="u-mono u-tile" id="lib-year-to" name="year_to" type="number" min="1980" max="2030"
+               placeholder="2026"
+               style="width:100%;padding:var(--m-space-2) var(--m-space-2);color:var(--m-ink);"
+               onchange="_refreshLibTable()" aria-label="2026">
+      </div>
+
+      {% if active_filter_count %}
+      <div style="align-self:flex-end;">
+        <button class="u-label u-label--accent btn btn--sec" onclick="clearLibFilters()"
+                style="letter-spacing:0.12em;padding:var(--m-space-2) var(--m-space-3);white-space:nowrap;">
+          CLEAR {{ active_filter_count }} FILTER{% if active_filter_count != 1 %}S{% endif %}
+        </button>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- ── Row 2: Item type chips ── -->
+    {% if item_types %}
+    <div class="u-row u-row--wrap u-rule" style="padding:var(--m-space-2) var(--m-space-5);gap:var(--m-space-1);">
+      <span class="u-label" style="margin-right:6px;">TYPE</span>
+      <button class="lib-chip{% if not active_type %} active{% endif %}"
+              data-type="" onclick="setLibType('')">All</button>
+      {% for itype, count in item_types %}
+      <button class="lib-chip{% if active_type == itype %} active{% endif %}"
+              data-type="{{ itype | e }}" onclick="setLibType(this.dataset.type)"
+              style="display:inline-flex;align-items:center;gap:var(--m-space-1);">
+        {% if itype == 'journalArticle' %}
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h5"/></svg>
+        Articles
+        {% elif itype == 'book' %}
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg>
+        Books
+        {% elif itype == 'report' %}
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6"/></svg>
+        Reports
+        {% elif itype == 'bookSection' %}
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 2v20"/></svg>
+        Chapters
+        {% elif itype == 'preprint' %}
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        Preprints
+        {% elif itype == 'thesis' %}
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 2 3 3 6 3s6-1 6-3v-5"/></svg>
+        Theses
+        {% elif itype == 'conferencePaper' %}
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        Conference
+        {% else %}{{ itype }}{% endif %}&nbsp;<span style="opacity:.55;">({{ count }})</span>
+      </button>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Hidden fields carrying filter state -->
+    <div class="u-hide" id="lib-hidden-fields">
+      <input type="hidden" id="lib-type-hidden" name="item_type" value="{{ active_type }}">
+      <input type="hidden" id="lib-sort-hidden" name="sort"      value="{{ active_sort }}">
+    </div>
+
+    <!-- ── Table area ── -->
+    {% include "partials/knowledge_library_table.html" %}
+
+  </div><!-- /.panel -->
+</div><!-- /#lib-browser-section -->
+
+<script>
+function setLibType(val) {
+  document.getElementById('lib-type-hidden').value = val;
+  document.querySelectorAll('.lib-chip[data-type]').forEach(b => {
+    b.classList.toggle('active', b.dataset.type === val);
+  });
+  _refreshLibTable();
+}
+function clearLibFilters() {
+  document.getElementById('lib-q').value = '';
+  document.getElementById('lib-type-hidden').value = '';
+  document.querySelectorAll('.lib-chip[data-type]').forEach(b => {
+    b.classList.toggle('active', b.dataset.type === '');
+  });
+  _refreshLibTable();
+}
+function _refreshLibTable() {
+  var q    = document.getElementById('lib-q').value;
+  var sort = document.getElementById('lib-sort').value;
+  var type = document.getElementById('lib-type-hidden').value;
+  var yf   = (document.getElementById('lib-year-from') || {}).value || '';
+  var yt   = (document.getElementById('lib-year-to')   || {}).value || '';
+  var rs   = (document.getElementById('lib-read-state') || {}).value || '';
+  document.getElementById('lib-sort-hidden').value = sort;
+  htmx.ajax('GET',
+    '/api/partial/knowledge/library-table?q=' + encodeURIComponent(q) +
+    '&sort=' + encodeURIComponent(sort) +
+    '&item_type=' + encodeURIComponent(type) +
+    '&year_from=' + encodeURIComponent(yf) +
+    '&year_to='   + encodeURIComponent(yt) +
+    '&read_state=' + encodeURIComponent(rs),
+    {target: '#lib-table-area', swap: 'outerHTML'}
+  );
+}
+</script>

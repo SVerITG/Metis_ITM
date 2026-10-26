@@ -1,0 +1,286 @@
+<div id="lib-table-area">
+
+  <!-- count line -->
+  <div class="u-label u-row u-rule" style="padding:var(--m-space-2) var(--m-space-5);gap:var(--m-space-3);">
+    {% if q or item_type or active_filter_count %}
+    <span>{{ total }} PAPER{% if total != 1 %}S{% endif %} MATCHING FILTERS</span>
+    {% else %}
+    <span>{{ total }} PAPERS IN LIBRARY</span>
+    {% endif %}
+    {# Indexed count #}
+    {% set indexed_count = items | selectattr("pdf_url") | list | length %}
+    {% if indexed_count %}
+    <span style="margin-left:auto;display:inline-flex;align-items:center;gap:var(--m-space-1);">
+      <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="var(--m-chart-2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8l4 4 8-8"/></svg>
+      <span style="color:var(--m-chart-2);">{{ indexed_count }} INDEXED</span>
+    </span>
+    {% endif %}
+  </div>
+
+  {# ── SVG type icon macros ── #}
+  {% macro type_icon(itype, size=15) %}
+  {% if itype == 'journalArticle' %}
+  <svg class="u-fixed" viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none" stroke="var(--m-chart-1)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" title="Journal Article">
+    <path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h5"/><path d="M16 4v4h-4" style="fill:color-mix(in srgb, var(--m-chart-1) 15%, transparent);stroke:var(--m-chart-1);"/>
+  </svg>
+  {% elif itype == 'book' %}
+  <svg class="u-fixed" viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none" stroke="var(--m-chart-6)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" title="Book">
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4h16v16H4z" style="fill:color-mix(in srgb, var(--m-chart-6) 8%, transparent);"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+  </svg>
+  {% elif itype == 'bookSection' %}
+  <svg class="u-fixed" viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none" stroke="var(--m-chart-7)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" title="Book Chapter">
+    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 2v20"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+  </svg>
+  {% elif itype == 'report' %}
+  <svg class="u-fixed" viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none" stroke="var(--m-chart-4)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" title="Report">
+    <path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/>
+  </svg>
+  {% elif itype == 'preprint' %}
+  <svg class="u-fixed" viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none" stroke="var(--m-chart-3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" title="Preprint">
+    <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+  </svg>
+  {% elif itype == 'thesis' %}
+  <svg class="u-fixed" viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none" stroke="var(--m-chart-2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" title="Thesis">
+    <path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 2 3 3 6 3s6-1 6-3v-5"/>
+  </svg>
+  {% elif itype == 'conferencePaper' %}
+  <svg class="u-fixed" viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none" stroke="var(--m-chart-5)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" title="Conference Paper">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </svg>
+  {% elif itype == 'webpage' or itype == 'document' %}
+  <svg class="u-fixed" viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none" stroke="var(--m-chart-8)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" title="Web page">
+    <circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/>
+  </svg>
+  {% else %}
+  <svg class="u-fixed" viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none" stroke="var(--m-chart-8)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" title="{{ itype or 'Document' }}">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h8"/>
+  </svg>
+  {% endif %}
+  {% endmacro %}
+
+  {# ── Type badge colors ── #}
+  {% set type_colors = {
+    'journalArticle': 'var(--m-chart-1)',
+    'book': 'var(--m-chart-6)',
+    'bookSection': 'var(--m-chart-7)',
+    'report': 'var(--m-chart-4)',
+    'preprint': 'var(--m-chart-3)',
+    'thesis': 'var(--m-chart-2)',
+    'conferencePaper': 'var(--m-chart-5)',
+    'webpage': 'var(--m-chart-8)',
+    'document': 'var(--m-chart-8)'
+  } %}
+  {% set type_labels = {
+    'journalArticle': 'Article',
+    'book': 'Book',
+    'bookSection': 'Chapter',
+    'report': 'Report',
+    'preprint': 'Preprint',
+    'thesis': 'Thesis',
+    'conferencePaper': 'Conference',
+    'webpage': 'Web',
+    'document': 'Document'
+  } %}
+
+  {% if items %}
+  <table style="width:100%;border-collapse:collapse;">
+    <thead>
+      <tr class="u-label u-label--wide" style="border-bottom:1px solid var(--m-rule);">
+        <th style="padding:var(--m-space-2) var(--m-space-5) var(--m-space-2) var(--m-space-5);text-align:left;font-weight:400;width:56px;">Year</th>
+        <th style="padding:var(--m-space-2) var(--m-space-3);text-align:left;font-weight:400;">Title / Authors</th>
+        <th style="padding:var(--m-space-2) var(--m-space-3);text-align:left;font-weight:400;width:160px;">Journal</th>
+        <th style="padding:var(--m-space-2) var(--m-space-3);text-align:center;font-weight:400;width:70px;">Status</th>
+        <th style="padding:var(--m-space-2) var(--m-space-5);text-align:right;font-weight:400;width:110px;"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      {% set icolor = type_colors.get(item.item_type, 'var(--m-chart-8)') %}
+      {#- 2C · a NEW row is a tinted band, not a mark on a row. This is the
+          loudest of the four options the researcher compared, so it must only ever apply
+          to something that genuinely arrived since he last looked. After the
+          2026-08-29 reset that is exactly what "not read" means: every item
+          that existed then was marked read and stamped with read_at, so an
+          unread row today is a new one.
+
+          The accent left border is dropped — it said the same thing a third
+          time, after the tint and the badge. -#}
+      <tr class="row-hit{% if not item.is_read %} is-new{% endif %} u-rule">
+
+        <!-- Year + type icon -->
+        <td style="padding:var(--m-space-3) var(--m-space-5);vertical-align:top;white-space:nowrap;">
+          <div class="u-row" style="flex-direction:column;gap:var(--m-space-1);">
+            {{ type_icon(item.item_type, 14) }}
+            <span class="u-label">
+              {{ item.year if item.year else '—' }}
+            </span>
+          </div>
+        </td>
+
+        <!-- Title + Authors + Type badge -->
+        <td style="padding:var(--m-space-3) var(--m-space-3);vertical-align:top;">
+          <div class="u-row u-row--base">
+            {#- Type badge. An item's type is a CATEGORY — a preprint is still a
+                preprint next month — so it is quiet text, not a pill. It was a
+                coloured pill sitting immediately beside the UNREAD pill, which
+                made a permanent fact and a changing state look identical. The
+                colour encoding is not lost: it stays on the type icon in the
+                year column, where it is a genuine data-series encoding rather
+                than decoration. ARTICLE is 60% of rows, so shouting it told
+                the reader nothing they could act on. -#}
+            {% if item.item_type %}
+            <span class="tag u-fixed">{{ type_labels.get(item.item_type, item.item_type) | lower }}</span>
+            {% endif %}
+            {# Read / unread toggle — the write half of a field that existed unused. #}
+            {#- Which of these two is loud is NOT a fixed choice — it follows which is
+    rare, and that flipped on 2026-08-29. Before the reset, 3,083 of 3,083 items
+    were unread, so "unread" was the meaningless mark and "read" earned the
+    colour. After the reset everything is read, so "read" is now the mark that
+    appears on every row and says nothing, and "unread" means something new and
+    precise: it arrived after 2026-08-29 and you have not opened it.
+    The rule is unchanged — the most common state is the quietest — only the
+    data moved underneath it. -#}
+            <button hx-post="/api/library/{{ item.id }}/read" hx-swap="outerHTML"
+                    class="stat u-fixed {% if item.is_read %}is-quiet{% else %}is-info{% endif %}"
+                    style="cursor:pointer;"
+                    title="{% if item.is_read %}Mark unread{% else %}Mark read{% endif %}"
+            >{% if item.is_read %}read{% else %}unread{% endif %}</button>
+            {# Title #}
+            <div class="u-grow u-title" style="line-height:1.35;">
+              {% if item.doi %}
+              <a class="hov-ink" href="https://doi.org/{{ item.doi }}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">{{ item.title }}</a>
+              {% elif item.url %}
+              <a class="hov-ink" href="{{ item.url }}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">{{ item.title }}</a>
+              {% else %}
+              {{ item.title }}
+              {% endif %}
+            </div>
+          </div>
+          {% if item.authors %}
+          <div class="u-label" style="margin-top:var(--m-space-1);">
+            {{ item.authors }}
+          </div>
+          {% endif %}
+          {# Collection tags #}
+          {% if item.collection_tags %}
+          <div style="display:flex;gap:var(--m-space-1);margin-top:var(--m-space-1);flex-wrap:wrap;">
+            {% for tag in item.collection_tags %}
+            <span class="u-label" style="padding:1px 6px;border-radius:var(--m-radius-sm);background:var(--m-surface-3);">{{ tag }}</span>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% if item.has_abstract %}
+          <div id="abs-{{ loop.index }}"
+               style="display:none;font-family:var(--m-display);font-size:12px;color:var(--m-muted);
+                      margin-top:8px;line-height:1.6;max-width:640px;padding:8px 12px;
+                      background:var(--m-surface-2);border-radius:3px;border-left:2px solid {{ icolor }};">
+            {{ item.abstract }}
+          </div>
+          {% endif %}
+        </td>
+
+        <!-- Journal -->
+        <td style="padding:var(--m-space-3) var(--m-space-3);font-family:var(--m-display);font-size:var(--t-meta);color:var(--m-muted);vertical-align:top;">
+          {% if item.source %}
+          {% if item.source | length > 40 %}{{ item.source | clip(40) }}{% else %}{{ item.source }}{% endif %}
+          {% endif %}
+        </td>
+
+        <!-- Status column — indexed + read indicators -->
+        <td style="padding:var(--m-space-3) var(--m-space-3);text-align:center;vertical-align:top;">
+          <div class="u-row" style="flex-direction:column;gap:var(--m-space-1);">
+            {% if item.pdf_url %}
+            <span class="u-mono" style="display:inline-flex;align-items:center;gap:var(--m-space-1);letter-spacing:0.08em;padding:var(--m-space-1) var(--m-space-2);border-radius:var(--m-radius-pill,10px);background:color-mix(in srgb, var(--m-chart-2) 10%, transparent);color:var(--m-chart-2);"
+              title="PDF indexed — full-text searchable">
+              <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="var(--m-chart-2)" stroke-width="2" stroke-linecap="round"><path d="M2 8l4 4 8-8"/></svg>
+              INDEXED
+            </span>
+            {% endif %}
+            {% if not item.is_read %}
+            <span class="u-mono" style="letter-spacing:0.08em;padding:1px 6px;border-radius:var(--m-radius-pill,10px);background:var(--m-accent);color:var(--m-on-accent);">NEW</span>
+            {% endif %}
+          </div>
+        </td>
+
+        <!-- Actions -->
+        <td style="padding:var(--m-space-3) var(--m-space-5);text-align:right;vertical-align:top;white-space:nowrap;">
+          {% if item.has_abstract %}
+          <button class="u-label" onclick="toggleAbstract({{ loop.index }})" id="abs-btn-{{ loop.index }}"
+                  style="background:none;border:1px solid var(--m-rule);border-radius:var(--m-radius-sm);cursor:pointer;padding:var(--m-space-1) var(--m-space-2);transition:border-color 140ms,color 140ms;"
+                  onmouseover="this.style.borderColor='{{ icolor }}';this.style.color='{{ icolor }}'"
+                  onmouseout="this.style.borderColor='var(--m-rule)';this.style.color='var(--m-muted)'"
+                  aria-label="Toggle abstract" title="Show/hide abstract">ABS</button>
+          {% endif %}
+          {% if item.doi %}
+          <a class="u-label u-label--accent" href="https://doi.org/{{ item.doi }}" target="_blank" rel="noopener"
+             style="letter-spacing:0.1em;text-decoration:none;padding:0 var(--m-space-1);"
+             title="Open DOI">DOI ↗</a>
+          {% endif %}
+          {% if item.pdf_url %}
+          <a class="u-mono" href="{{ item.pdf_url }}" target="_blank" rel="noopener"
+             style="display:inline-block;letter-spacing:0.1em;color:var(--m-ok);text-decoration:none;padding:var(--m-space-1) var(--m-space-2);margin-left:2px;border:1px solid var(--m-ok);border-radius:var(--m-radius-sm);transition:background 140ms,color 140ms;"
+             onmouseover="this.style.background='var(--m-ok)';this.style.color='var(--m-on-accent)'"
+             onmouseout="this.style.background='';this.style.color='var(--m-ok)'"
+             title="Open local PDF">PDF ↗</a>
+          {% endif %}
+        </td>
+
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% else %}
+  <div style="padding:52px 24px;text-align:center;">
+    <svg class="u-mb-3" viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--m-muted)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="opacity:.4;">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <div class="u-label u-mb-3" style="letter-spacing:0.22em;">ZOTERO LIBRARY</div>
+    <div class="u-mb-2 u-title u-title--lg" style="font-weight:500;">No papers match your filters.</div>
+    <div class="u-ed" style="font-size:var(--t-small);">Try broadening your search or removing a type filter.</div>
+  </div>
+  {% endif %}
+
+  {# ── Pagination ────────────────────────────────────────────────────────────
+     Shows WHERE you are as well as how to move: "26-50 of 726". A catalogue
+     without a position indicator makes a reader lose their place, which is the
+     whole reason page numbers exist. Hidden entirely on a single page of results. #}
+  {% if total_pages and total_pages > 1 %}
+  <div class="u-row u-row--between u-rule-t" style="padding:var(--m-space-3) var(--m-space-5);gap:var(--m-space-3);">
+    <span class="u-mono" style="letter-spacing:0.1em;color:var(--m-muted);">
+      {{ (page - 1) * page_size + 1 }}–{{ [page * page_size, total] | min }} OF {{ total }}
+    </span>
+    <div class="u-row">
+      <button {% if page <= 1 %}disabled{% endif %}
+              hx-get="/api/partial/knowledge/library-table?page={{ page - 1 }}&q={{ q | urlencode }}&item_type={{ item_type | urlencode }}&sort={{ sort | urlencode }}&year_from={{ year_from | urlencode }}&year_to={{ year_to | urlencode }}"
+              hx-target="#lib-table-area" hx-swap="outerHTML"
+              style="font-family:var(--m-mono);font-size:10px;padding:4px 10px;border:1px solid var(--m-line);
+                     border-radius:4px;background:var(--m-surface);color:var(--m-ink);
+                     cursor:{% if page <= 1 %}default{% else %}pointer{% endif %};
+                     opacity:{% if page <= 1 %}0.4{% else %}1{% endif %};">← Previous</button>
+      <span class="u-mono" style="color:var(--m-muted);">
+        {{ page }} / {{ total_pages }}
+      </span>
+      <button {% if page >= total_pages %}disabled{% endif %}
+              hx-get="/api/partial/knowledge/library-table?page={{ page + 1 }}&q={{ q | urlencode }}&item_type={{ item_type | urlencode }}&sort={{ sort | urlencode }}&year_from={{ year_from | urlencode }}&year_to={{ year_to | urlencode }}"
+              hx-target="#lib-table-area" hx-swap="outerHTML"
+              style="font-family:var(--m-mono);font-size:10px;padding:4px 10px;border:1px solid var(--m-line);
+                     border-radius:4px;background:var(--m-surface);color:var(--m-ink);
+                     cursor:{% if page >= total_pages %}default{% else %}pointer{% endif %};
+                     opacity:{% if page >= total_pages %}0.4{% else %}1{% endif %};">Next →</button>
+    </div>
+  </div>
+  {% endif %}
+
+</div><!-- /#lib-table-area -->
+
+<script>
+function toggleAbstract(idx) {
+  var el  = document.getElementById('abs-' + idx);
+  var btn = document.getElementById('abs-btn-' + idx);
+  if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (btn) btn.style.color = open ? '' : 'var(--m-accent)';
+}
+</script>

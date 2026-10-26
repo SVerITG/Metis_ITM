@@ -1,0 +1,227 @@
+name: Build Windows Installer
+
+# Triggers:
+#   - push of a v* tag  (e.g. git tag v1.1 && git push origin v1.1)
+#   - manual run from the Actions tab (workflow_dispatch)
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version string (e.g. 1.1) — overrides the default in the .iss'
+        required: false
+        default: ''
+
+jobs:
+  build-installer:
+    name: Compile Inno Setup installers (Full / Standard / Minimal)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Locate Inno Setup 6
+        shell: pwsh
+        run: |
+          # windows-2025 runners ship with Inno Setup 6 pre-installed — no choco needed.
+          # Fall back to choco install only if ISCC is not found.
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue)?.Source
+          if (-not $iscc) {
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue)?.Source
+            if (-not $iscc) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
+          }
+          echo "ISCC_PATH=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "ISCC found at: $iscc"
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $ver = "${{ github.event.inputs.version }}"
+          if (-not $ver) {
+            # Extract from tag (v1.1 → 1.1) or fall back to 1.0
+            $tag = "${{ github.ref_name }}"
+            $ver = if ($tag -match '^v(.+)$') { $Matches[1] } else { "1.0" }
+          }
+          echo "VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Building version: $ver"
+
+      - name: Build MetisTray.exe (PyInstaller)
+        shell: pwsh
+        run: |
+          # Install Python build deps and PyInstaller, then bundle the tray launcher.
+          # Uses the GitHub Actions runner Python (3.x pre-installed on windows-latest).
+          python -m pip install --quiet pyinstaller pystray Pillow
+          Set-Location "system\install"
+          pyinstaller tray-launcher.spec --noconfirm --clean
+          if (Test-Path "dist\MetisTray.exe") {
+            Write-Host "MetisTray.exe built OK"
+          } else {
+            Write-Warning "MetisTray.exe not found after build — continuing without it"
+          }
+
+      - name: Compile the installer
+        shell: pwsh
+        run: |
+          Set-Location "system\install\installer"
+          & "$env:ISCC_PATH" /DMyAppVersion=$env:VERSION metis-setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: List compiled installers
+        shell: pwsh
+        run: |
+          Get-ChildItem "system\install\installer\dist\*.exe" |
+            Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+
+      # Compiling proves the file builds, not that it installs. Run it silently, as a
+      # colleague's double-click would, and check what it left behind. The release
+      # step below only runs if this passes.
+      - name: Install it silently and check the result
+        shell: powershell   # Windows PowerShell 5.1, like the colleague's machine
+        env:
+          METIS_SKIP_CLAUDE: "1"   # do not download Claude Desktop onto the build machine
+        run: |
+          $exe = Get-ChildItem "system\install\installer\dist\MetisSetup-*.exe" | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP "MetisTest"
+          $log = Join-Path $env:RUNNER_TEMP "setup.log"
+          $p = Start-Process -FilePath $exe.FullName -PassThru -ArgumentList `
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$dir`"", "/LOG=`"$log`"", "/TYPE=full"
+          # A hang must explain itself: time-limited, and the logs always printed.
+          if (-not $p.WaitForExit(1500000)) {
+            Write-Host "--- still running after 25 minutes; processes:"
+            Get-CimInstance Win32_Process | Where-Object { $_.Name -match "python|powershell|uv|cmd" } |
+              ForEach-Object { "$($_.ProcessId) $($_.Name) $($_.CommandLine)" }
+            Write-Host "--- setup log:"; Get-Content $log -Tail 40
+            Write-Host "--- install log:"; Get-Content (Join-Path $dir "system\install\install-log.txt") -Tail 60 -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force
+            throw "setup did not finish within 25 minutes"
+          }
+          Write-Host "--- setup log (tail):"; Get-Content $log -Tail 25
+          if ($p.ExitCode -ne 0) { throw "setup exited $($p.ExitCode)" }
+          $py = Join-Path $env:LOCALAPPDATA "Metis\venv\Scripts\python.exe"
+          if (-not (Test-Path $py)) {
+            Get-Content (Join-Path $dir "system\install\install-log.txt") -Tail 80 -ErrorAction SilentlyContinue
+            throw "setup finished but the Metis environment was not created"
+          }
+          & $py -c "import metis_mcp.server"
+          if ($LASTEXITCODE -ne 0) { throw "installed Metis tools do not import" }
+          $cfg = Get-Content (Join-Path $env:APPDATA "Claude\claude_desktop_config.json") -Raw | ConvertFrom-Json
+          if (-not $cfg.mcpServers.'metis-rc') { throw "Claude Desktop was not connected" }
+          if (-not (Get-ScheduledTask -TaskName "Metis self-check" -ErrorAction SilentlyContinue)) {
+            throw "the daily self-check was not scheduled"
+          }
+          if (-not (Get-ScheduledTask -TaskName "Metis dashboard" -ErrorAction SilentlyContinue)) {
+            throw "the dashboard is not started at log-on"
+          }
+          # An update: setup run again over the installed copy, with Metis running.
+          # It must skip the questions, keep the profile, and still succeed.
+          $p2 = Start-Process -FilePath $exe.FullName -PassThru -ArgumentList `
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$dir`"", "/LOG=`"$log`""
+          if (-not $p2.WaitForExit(1500000)) { Stop-Process -Id $p2.Id -Force; throw "the update did not finish within 25 minutes" }
+          if ($p2.ExitCode -ne 0) {
+            Get-Content (Join-Path $dir "system\install\install-log.txt") -Tail 80 -ErrorAction SilentlyContinue
+            throw "the update exited $($p2.ExitCode)"
+          }
+          & $py -c "import metis_mcp.server"
+          if ($LASTEXITCODE -ne 0) { throw "Metis tools do not import after the update" }
+          Write-Host "Installed and connected: $dir"
+
+      - name: Upload the installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MetisSetup-${{ env.VERSION }}
+          path: system/install/installer/dist/MetisSetup-*.exe
+          if-no-files-found: error
+
+      # An edition (an institute's copy) brings its own release notes; the
+      # full build's notes below would describe what the edition leaves out.
+      - name: Read the edition's name
+        if: hashFiles('system/config/edition.json') != ''
+        shell: pwsh
+        run: |
+          $n = (Get-Content system/config/edition.json -Raw | ConvertFrom-Json).name
+          "EDITION_NAME=$n" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Create GitHub Release (edition notes)
+        if: startsWith(github.ref, 'refs/tags/') && hashFiles('system/install/installer/release-notes.md') != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ env.EDITION_NAME }} ${{ env.VERSION }}"
+          body_path: system/install/installer/release-notes.md
+          files: system/install/installer/dist/MetisSetup-*.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') && hashFiles('system/install/installer/release-notes.md') == ''
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Metis ${{ env.VERSION }}"
+          body: |
+            ## Metis ${{ env.VERSION }}
+
+            A research companion for Claude: persistent memory of your work, 33 specialists,
+            and a research dashboard.
+
+            ### Windows
+            Download **`MetisSetup-${{ env.VERSION }}.exe`** below and run it. No administrator
+            rights, no Python and no WSL needed — setup fetches what it needs. Choose a full
+            install (assistant + dashboard) or the assistant only. Setup can load a fictional
+            sample workspace and opens a short tour.
+
+            Windows SmartScreen may warn that the installer is from an unknown publisher (it is
+            not code-signed yet): choose *More info → Run anyway*.
+
+            **Already have Metis?** Run the new setup over it: it skips the questions and keeps
+            your profile, library and projects. From 1.3 on you can also say *"update Metis"*
+            in Claude Desktop.
+
+            ### What setup checks and looks after
+            - Works on institutional laptops: a Documents folder inside OneDrive, a proxy,
+              networks that inspect secure connections, Windows on ARM. If your organisation's
+              policy blocks setup, the first page says so in words you can take to IT.
+            - Connects Metis to Claude Desktop, Claude Code, VS Code and Cursor — whichever you
+              have — without touching your other connectors.
+            - An **install doctor** checks everything Metis needs (your computer, its programs,
+              each AI app, the dashboard, the background tasks, your data) every day and repairs
+              what it can. Run it any time from the dashboard's Metis tab, or say *"check that
+              everything works"* to Metis.
+            - The dashboard starts quietly when you log on, so the morning news and paper scans
+              run. A morning briefing can arrive every working day through Claude Desktop's
+              scheduled tasks (paid Claude plans) — Metis walks you through setting it up.
+            - If setup cannot finish, it says so and where the details are, instead of
+              finishing as if all were well.
+
+            ### Linux and macOS
+            ```bash
+            git clone https://github.com/SVerITG/Metis
+            bash Metis/system/mcp-server/setup-mcp.sh
+            ```
+
+            ### You need
+            - Windows 10 (1809) or later, or a recent Linux / macOS
+            - [Claude Desktop](https://claude.ai/download) or Claude Code, with a Claude account
+            - An Anthropic API key is **optional** — it only powers background features such as
+              the automatic morning brief, and is paid separately
+
+            Your files and database stay on your computer; what you ask Claude is processed by
+            Anthropic's Claude service.
+          files: system/install/installer/dist/MetisSetup-*.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,87 @@
+<!-- work_project_tasks.html — Top-5 tasks + expand to full detail -->
+{#- The DATE CONTROL is imported, not rewritten. `_duedate.html` already offers
+    today / tomorrow / this week / next week / this month plus a picker, and it
+    has lived in the flat all-tasks list — the list nobody opens — which is why
+    2 of 92 open tasks carried a date. An element authored twice drifts; this is
+    the same macro, on the row where the work actually is. -#}
+{% from "partials/_duedate.html" import due_control %}
+{% if not tasks and not done_count %}
+<div class="u-label" style="padding:var(--m-space-1) 0;">
+  NO OPEN TASKS
+</div>
+{% else %}
+
+{% for t in tasks %}
+<div class="u-row u-rule" style="padding:var(--m-space-1) 0;">
+  <span style="font-family:var(--m-mono);font-size:11px;flex-shrink:0;
+               color:{% if t.status == 'blocked' %}var(--m-alert){% elif t.status == 'in_progress' %}var(--m-accent){% else %}var(--m-muted){% endif %};">
+    {% if t.status == 'blocked' %}●{% elif t.status == 'in_progress' %}▸{% else %}·{% endif %}
+  </span>
+  <span class="u-grow u-truncate" style="font-family:var(--m-display);font-size:var(--t-meta);color:var(--m-ink);line-height:1.35;"
+        title="{{ t.title }}">{{ t.title }}</span>
+  {#- Date before star. Setting a date is the ordinary act; starring is the
+      exception you use when something matters without being due. -#}
+  {{ due_control(t.task_id, (t.due_date or '')[:10], compact=true) }}
+  <!-- star -->
+  <button onclick="miniTaskStar('{{ t.task_id }}','{{ project_id }}',this)"
+          title="{% if t.starred %}Unstar{% else %}Star (appears in Today){% endif %}"
+          style="background:none;border:none;padding:0 2px;cursor:pointer;font-size:11px;flex-shrink:0;line-height:1;
+                 color:{% if t.starred %}var(--m-ochre-deep){% else %}var(--m-muted){% endif %};opacity:{% if t.starred %}1{% else %}0.4{% endif %};">&#9733;</button>
+  <!-- done -->
+  <button class="u-fixed btn btn--ghost" onclick="markProjectTaskDone('{{ t.task_id }}','{{ project_id }}')"
+          title="Mark done"
+          style="padding:0 var(--m-space-1);color:var(--m-ok);font-size:var(--t-micro);line-height:1;opacity:0.5;"
+          onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.5'">&#10003;</button>
+  <!-- delete -->
+  <button class="u-fixed btn btn--ghost" onclick="miniTaskDelete('{{ t.task_id }}','{{ project_id }}')"
+          title="Delete task"
+          style="padding:0 var(--m-space-1);color:var(--m-muted);font-size:var(--t-micro);line-height:1;opacity:0.3;"
+          onmouseenter="this.style.opacity='1';this.style.color='var(--m-alert)'"
+          onmouseleave="this.style.opacity='.3';this.style.color='var(--m-muted)'">&#10005;</button>
+</div>
+{% endfor %}
+
+{% if total_open > 5 or done_count %}
+<div class="u-row" style="padding-top:6px;">
+  {% if total_open > 5 %}
+  <span class="u-label">+{{ total_open - 5 }} more</span>
+  {% endif %}
+  {% if done_count %}
+  <span class="u-mono" style="color:var(--m-ok);">{{ done_count }} done</span>
+  {% endif %}
+  <button class="u-label" onclick="openProjectDetail('{{ project_id }}')"
+          style="margin-left:auto;background:none;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-1) var(--m-space-2);cursor:pointer;">ALL TASKS ↗</button>
+</div>
+{% endif %}
+
+{% endif %}
+
+<!-- Quick-add task form (hidden by default) -->
+<div class="u-rule-t u-hide" id="task-add-{{ project_id }}" style="padding-top:8px;margin-top:var(--m-space-2);">
+  <div class="u-row" style="flex-wrap:wrap;">
+    <input class="u-grow u-tile" id="task-title-{{ project_id }}"
+           type="text"
+           placeholder="Task title…"
+           onkeydown="if(event.key==='Enter'){submitQuickTask('{{ project_id }}');}"
+           style="min-width:120px;font-family:var(--m-display);font-size:var(--t-meta);padding:var(--m-space-1) var(--m-space-2);color:var(--m-ink);" aria-label="Task title">
+    <select class="u-label u-tile" id="task-cat-{{ project_id }}"
+            style="padding:var(--m-space-1) var(--m-space-2);">
+      <option value="general">general</option>
+      <option value="urgent">urgent</option>
+      <option value="high">high</option>
+      <option value="research">research</option>
+      <option value="writing">writing</option>
+      <option value="code">code</option>
+      <option value="review">review</option>
+    </select>
+    <button class="btn btn--primary u-mono" onclick="submitQuickTask('{{ project_id }}')"
+            style="border:none;padding:var(--m-space-1) var(--m-space-3);">Add</button>
+    <button class="btn btn--ghost" onclick="document.getElementById('task-add-{{ project_id }}').classList.add('u-hide');"
+            style="padding:var(--m-space-1) var(--m-space-1);color:var(--m-muted);font-size:var(--t-small);">✕</button>
+  </div>
+</div>
+
+<!-- "+ add task" trigger -->
+<button class="u-label btn btn--ghost" onclick="document.getElementById('task-add-{{ project_id }}').classList.remove('u-hide');
+                 document.getElementById('task-title-{{ project_id }}').focus();"
+        style="padding:var(--m-space-1) 0 0;text-decoration:underline dotted;text-underline-offset:2px;display:block;margin-top:var(--m-space-1);">+ add task</button>

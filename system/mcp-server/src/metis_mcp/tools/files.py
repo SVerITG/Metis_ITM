@@ -1,0 +1,564 @@
+"""File tracking tools for monitoring changes in key PKM files."""
+
+import datetime
+import os
+import re
+from pathlib import Path
+
+from mcp.types import TextContent
+
+from metis_mcp.config import paths
+from metis_mcp.db import connect
+from metis_mcp.app_instance import app
+
+# Extensions considered "project files" for connect_project_folder
+_PROJECT_EXTENSIONS = {
+    ".R", ".r", ".Rmd", ".rmd", ".md", ".py", ".js", ".ts",
+    ".sql", ".json", ".yaml", ".yml", ".qmd", ".tex", ".csv",
+}
+
+# ── Path confinement for read_file / list_folder ──────────────────────────────
+# These tools took an ABSOLUTE path and read it with no boundary at all: no root
+# check, no deny-list. That made `~/.ssh/id_rsa`, `system/.env` and — worst —
+# `basket/private/` readable straight into the Claude API context.
+#
+# `basket/private/` is declared off-limits to every agent in CLAUDE.md and in the
+# list_basket docstring, but that was enforced ONLY inside list_basket. The
+# sensitive-data boundary was documentation, not code. The Claude Code hook that
+# blocks some of this is client-side and Claude Desktop never loads it.
+#
+# So the boundary lives HERE, server-side, where every caller must pass through it.
+_DENY_FILENAMES = {
+    ".env", ".env.local", ".netrc", ".pgpass", "credentials",
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+}
+_DENY_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".ppk"}
+# Any path component equal to one of these is refused outright.
+_DENY_DIR_PARTS = {".ssh", ".gnupg", ".aws", ".azure", ".kube", "gcloud"}
+
+
+def resolve_user_path(value: str) -> Path:
+    """Turn a path as a client writes it into the one this server can open.
+
+    A Windows path (C:\\Users\\...) becomes /mnt/c/Users/... when the server
+    runs under WSL, and a relative path means "inside Metis" rather than inside
+    whatever directory the client launched the server from (Claude Desktop
+    starts it in the Windows system folder).
+    """
+    v = (value or "").strip().strip('"')
+    m = re.match(r"^([A-Za-z]):[\\/](.*)$", v)
+    if m and os.name != "nt" and Path("/mnt").is_dir():
+        v = f"/mnt/{m.group(1).lower()}/" + m.group(2).replace("\\", "/")
+    p = Path(v).expanduser()
+    if not p.is_absolute():
+        p = paths.root / p
+    return p
+
+
+def _path_refusal(target: Path) -> str | None:
+    """Return a refusal message if this path must not be touched, else None.
+
+    Deny-list first (applies everywhere, even inside the repo), then confinement.
+    """
+    try:
+        rp = target.expanduser().resolve()
+    except (OSError, RuntimeError):
+        return "Path could not be resolved."
+
+    lower_parts = [p.lower() for p in rp.parts]
+
+    # 1. basket/private/ — patient / personal data. Never, from anywhere.
+    if "basket" in lower_parts and "private" in lower_parts:
+        return (
+            "Refused: `basket/private/` is off-limits to all agents "
+            "(patient / personal data). This is enforced server-side."
+        )
+
+    # 2. Credential stores and secret files.
+    if any(p in _DENY_DIR_PARTS for p in lower_parts):
+        return f"Refused: `{rp.name}` sits in a credentials directory."
+    if rp.name.lower() in _DENY_FILENAMES or rp.suffix.lower() in _DENY_SUFFIXES:
+        return f"Refused: `{rp.name}` looks like a secret or credential file."
+
+    # 3. Confinement. Allowed: anywhere under the Metis root (the user's own
+    #    research tree), or a NON-hidden path under $HOME (project folders, R
+    #    repos). That still permits every legitimate use — reading an R script in
+    #    ~/projects — while refusing /etc/shadow and every dotfile store in $HOME.
+    home = Path.home().resolve()
+    roots = [home]
+    rc_root = os.environ.get("METIS_RC_ROOT")
+    if rc_root:
+        try:
+            roots.append(Path(rc_root).resolve())
+        except (OSError, RuntimeError):
+            pass
+
+    if not any(rp == r or r in rp.parents for r in roots):
+        return f"Refused: `{rp}` is outside the Metis workspace and your home folder."
+
+    # Hidden directories under $HOME hold config/credentials — refuse unless the
+    # path is inside the Metis root itself (which is where the app legitimately lives).
+    in_rc = rc_root and (Path(rc_root).resolve() in rp.parents or Path(rc_root).resolve() == rp)
+    if not in_rc:
+        rel = rp.relative_to(home) if home in rp.parents else None
+        if rel and any(part.startswith(".") for part in rel.parts):
+            return f"Refused: `{rp}` is inside a hidden (configuration) directory."
+
+    return None
+
+_TRACKED_FILES_DDL = """
+CREATE TABLE IF NOT EXISTS tracked_files (
+    path TEXT PRIMARY KEY,
+    last_modified TEXT NOT NULL,
+    last_scanned TEXT NOT NULL,
+    label TEXT DEFAULT '',
+    watch INTEGER DEFAULT 0
+)
+"""
+
+
+def _ensure_tracked_files(conn) -> None:
+    """Create tracked_files table and apply any pending column migrations."""
+    conn.execute(_TRACKED_FILES_DDL)
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(tracked_files)").fetchall()}
+    if "label" not in cols:
+        conn.execute("ALTER TABLE tracked_files ADD COLUMN label TEXT DEFAULT ''")
+    if "watch" not in cols:
+        conn.execute("ALTER TABLE tracked_files ADD COLUMN watch INTEGER DEFAULT 0")
+
+
+@app.tool()
+async def scan_tracked_files() -> list[TextContent]:
+    """Scan all tracked files and report which have changed since last scan.
+
+    Reads tracked_files table, checks actual file modification times,
+    and updates last_scanned timestamps.
+    """
+    if not paths.db.exists():
+        return [TextContent(type="text", text=f"Database not found: {paths.db}")]
+
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    try:
+        with connect(paths.db) as conn:
+            _ensure_tracked_files(conn)
+            cur = conn.execute("SELECT * FROM tracked_files WHERE watch = 1 ORDER BY path")
+            rows = cur.fetchall()
+
+            if not rows:
+                return [TextContent(type="text", text="No tracked files. Use add_tracked_file to start tracking.")]
+
+            results = []
+            for row in rows:
+                file_path = row["path"]
+                last_modified_db = row["last_modified"]
+                label = row["label"] or ""
+
+                try:
+                    stat = os.stat(file_path)
+                    actual_mtime = datetime.datetime.fromtimestamp(
+                        stat.st_mtime, tz=datetime.timezone.utc
+                    ).isoformat()
+                    changed = actual_mtime > last_modified_db
+                    exists = True
+                except OSError:
+                    actual_mtime = ""
+                    changed = False
+                    exists = False
+
+                results.append({
+                    "path": file_path,
+                    "label": label,
+                    "exists": exists,
+                    "last_modified": actual_mtime if exists else "FILE NOT FOUND",
+                    "changed": changed,
+                })
+
+                # Update last_scanned and last_modified if changed
+                if exists and changed:
+                    conn.execute(
+                        "UPDATE tracked_files SET last_scanned = ?, last_modified = ? WHERE path = ?",
+                        (now, actual_mtime, file_path),
+                    )
+                elif exists:
+                    conn.execute(
+                        "UPDATE tracked_files SET last_scanned = ? WHERE path = ?",
+                        (now, file_path),
+                    )
+
+            conn.commit()
+
+            # Format output
+            changed_files = [r for r in results if r["changed"]]
+            missing_files = [r for r in results if not r["exists"]]
+
+            lines = [f"**Tracked files: {len(results)} total**\n"]
+
+            if changed_files:
+                lines.append(f"**Changed ({len(changed_files)}):**")
+                for r in changed_files:
+                    lbl = f" [{r['label']}]" if r["label"] else ""
+                    lines.append(f"- {r['path']}{lbl}")
+
+            if missing_files:
+                lines.append(f"\n**Missing ({len(missing_files)}):**")
+                for r in missing_files:
+                    lbl = f" [{r['label']}]" if r["label"] else ""
+                    lines.append(f"- {r['path']}{lbl}")
+
+            unchanged = len(results) - len(changed_files) - len(missing_files)
+            if unchanged > 0:
+                lines.append(f"\n**Unchanged:** {unchanged} files")
+
+            return [TextContent(type="text", text="\n".join(lines))]
+
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error scanning tracked files: {e}")]
+
+
+@app.tool()
+async def add_tracked_file(
+    path: str,
+    label: str = "",
+) -> list[TextContent]:
+    """Add a single file to the tracked-files list and start watching it.
+
+    Registers one file so Metis notices when it changes and can read it later
+    via read_file; tracked files surface on the dashboard's Planning tab. The
+    file's current modification time is recorded and watch is set on. Re-adding
+    an existing path updates it (and keeps the old label unless a new one is
+    given). To register a whole project at once, use connect_project_folder.
+
+    Args:
+        path: Absolute path to the file to track; the file must exist or an
+            error is returned.
+        label: Optional category label for the file (default empty string);
+            on re-add, an empty label leaves the existing label unchanged.
+
+    Returns:
+        A confirmation message naming the tracked file (and its label, if any),
+        or a "file not found" / error message.
+    """
+    if not paths.db.exists():
+        return [TextContent(type="text", text=f"Database not found: {paths.db}")]
+
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    try:
+        stat = os.stat(path)
+        mtime = datetime.datetime.fromtimestamp(
+            stat.st_mtime, tz=datetime.timezone.utc
+        ).isoformat()
+    except OSError:
+        return [TextContent(type="text", text=f"File not found: {path}")]
+
+    try:
+        with connect(paths.db) as conn:
+            _ensure_tracked_files(conn)
+            conn.execute(
+                """INSERT INTO tracked_files (path, last_modified, last_scanned, label, watch)
+                   VALUES (?, ?, ?, ?, 1)
+                   ON CONFLICT(path) DO UPDATE SET
+                       last_modified = excluded.last_modified,
+                       last_scanned = excluded.last_scanned,
+                       label = CASE WHEN excluded.label != '' THEN excluded.label ELSE tracked_files.label END,
+                       watch = 1""",
+                (path, mtime, now, label),
+            )
+            conn.commit()
+
+        return [TextContent(type="text", text=f"Now tracking: {path}" + (f" [{label}]" if label else ""))]
+
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error adding tracked file: {e}")]
+
+
+@app.tool()
+async def connect_project_folder(
+    folder_path: str,
+    label: str = "",
+    max_files: int = 200,
+) -> list[TextContent]:
+    """Register all relevant files in a project folder so Metis can read them.
+
+    Walks the folder recursively and adds every file with a recognised extension
+    (.R, .Rmd, .md, .py, .js, .ts, .sql, .json, .yaml, .qmd, .tex, .csv) to
+    the tracked_files table. Call this once per project; after that, use
+    read_file() to read any individual file.
+
+    Args:
+        folder_path: Absolute path to the project root folder.
+        label: Short label for all files from this project (e.g. "MLM Course").
+        max_files: Safety limit — stop after registering this many files (default 200).
+    """
+    if not paths.db.exists():
+        return [TextContent(type="text", text=f"Database not found: {paths.db}")]
+
+    root = Path(folder_path)
+    if not root.is_dir():
+        return [TextContent(type="text", text=f"Folder not found: {folder_path}")]
+
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    registered = []
+    skipped = []
+
+    try:
+        with connect(paths.db) as conn:
+            _ensure_tracked_files(conn)
+            _skip_dirs = {"__pycache__", "node_modules", ".venv", "venv", ".git"}
+            for dirpath, dirnames, filenames in os.walk(str(root)):
+                # Prune unwanted directories in-place (faster than filtering after)
+                dirnames[:] = [
+                    d for d in dirnames
+                    if not d.startswith(".") and d not in _skip_dirs
+                ]
+                for fname in filenames:
+                    fp = Path(dirpath) / fname
+                    if fp.suffix not in _PROJECT_EXTENSIONS:
+                        continue
+                    if len(registered) >= max_files:
+                        skipped.append(str(fp))
+                        continue
+
+                try:
+                    conn.execute(
+                        """INSERT INTO tracked_files (path, last_modified, last_scanned, label, watch)
+                           VALUES (?, ?, ?, ?, 0)
+                           ON CONFLICT(path) DO UPDATE SET
+                               last_scanned = excluded.last_scanned,
+                               label = CASE WHEN excluded.label != '' THEN excluded.label ELSE tracked_files.label END""",
+                        (str(fp), now, now, label),
+                    )
+                    registered.append(str(fp))
+                except Exception:
+                    pass
+
+            conn.commit()
+
+        lines = [
+            f"**Connected project folder:** `{folder_path}`",
+            f"**Label:** {label or '(none)'}",
+            f"**Files registered:** {len(registered)}",
+        ]
+        if skipped:
+            lines.append(f"**Skipped (limit {max_files} reached):** {len(skipped)} files — increase max_files if needed")
+        lines.append("\nYou can now ask Metis to read any of these files using `read_file(path)`.")
+        lines.append("\n**Sample files registered:**")
+        for f in registered[:10]:
+            lines.append(f"- `{f}`")
+        if len(registered) > 10:
+            lines.append(f"- … and {len(registered) - 10} more")
+
+        return [TextContent(type="text", text="\n".join(lines))]
+
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error connecting folder: {e}")]
+
+
+@app.tool()
+async def read_file(path: str, max_chars: int = 8000) -> list[TextContent]:
+    """Read the content of a file and return it as text.
+
+    Works for any text file: R scripts, markdown, Python, JSON, CSV, etc.
+    The file does not need to be pre-registered in tracked_files.
+
+    Args:
+        path: Absolute path to the file to read.
+        max_chars: Maximum characters to return (default 8000). For large files,
+                   increase this or ask for a specific section.
+    """
+    fp = resolve_user_path(path)
+
+    # Boundary check BEFORE any stat/read — and before we reveal whether the file
+    # even exists (a "File not found" on ~/.ssh/id_rsa is itself a disclosure).
+    refusal = _path_refusal(fp)
+    if refusal:
+        return [TextContent(type="text", text=refusal)]
+
+    if not fp.exists():
+        return [TextContent(type="text", text=f"File not found: {path}")]
+    if not fp.is_file():
+        return [TextContent(type="text", text=f"Not a file: {path}")]
+
+    # Basic safety: refuse to read binary / very large files
+    try:
+        size = fp.stat().st_size
+    except OSError as e:
+        return [TextContent(type="text", text=f"Cannot stat file: {e}")]
+
+    if size > 5_000_000:  # 5 MB
+        return [TextContent(type="text", text=f"File too large ({size:,} bytes). Please use a specific section or split the file.")]
+
+    try:
+        content = fp.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error reading file: {e}")]
+
+    truncated = len(content) > max_chars
+    if truncated:
+        content = content[:max_chars]
+
+    header = f"**File:** `{path}`\n**Size:** {size:,} bytes\n\n"
+    if truncated:
+        header += f"*(truncated to {max_chars:,} chars — use max_chars to read more)*\n\n"
+
+    return [TextContent(type="text", text=header + content)]
+
+
+@app.tool()
+async def list_folder(folder_path: str, pattern: str = "*") -> list[TextContent]:
+    """List files in a folder.
+
+    Args:
+        folder_path: Absolute path to the folder.
+        pattern: Glob pattern to filter files (e.g. "*.R", "*.md"). Default: all files.
+    """
+    root = resolve_user_path(folder_path)
+
+    # Same server-side boundary as read_file — listing a directory is disclosure too.
+    refusal = _path_refusal(root)
+    if refusal:
+        return [TextContent(type="text", text=refusal)]
+
+    if not root.exists():
+        return [TextContent(type="text", text=f"Folder not found: {folder_path}")]
+    if not root.is_dir():
+        return [TextContent(type="text", text=f"Not a folder: {folder_path}")]
+
+    try:
+        files = sorted(root.glob(pattern))
+        dirs  = [f for f in files if f.is_dir()]
+        fls   = [f for f in files if f.is_file()]
+
+        lines = [f"**Folder:** `{folder_path}`", f"**Pattern:** `{pattern}`", ""]
+        if dirs:
+            lines.append(f"**Subdirectories ({len(dirs)}):**")
+            for d in dirs[:20]:
+                lines.append(f"  📁 {d.name}/")
+            if len(dirs) > 20:
+                lines.append(f"  … and {len(dirs) - 20} more")
+
+        if fls:
+            lines.append(f"\n**Files ({len(fls)}):**")
+            for f in fls[:50]:
+                lines.append(f"  📄 {f.name}")
+            if len(fls) > 50:
+                lines.append(f"  … and {len(fls) - 50} more")
+
+        if not dirs and not fls:
+            lines.append("*(empty — no matches)*")
+
+        return [TextContent(type="text", text="\n".join(lines))]
+
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error listing folder: {e}")]
+
+
+@app.tool()
+async def list_basket() -> list[TextContent]:
+    """List files in the Metis basket (legacy & inspiration documents).
+
+    The basket is a flat holding area for any document kept as a reference for
+    future work. The private/ subfolder is NEVER listed — it contains personal
+    or patient data.
+    """
+    basket_root = paths.root / "basket"
+    if not basket_root.is_dir():
+        return [TextContent(type="text", text="Basket folder not found. Create it at metis/basket/.")]
+
+    private_dir = basket_root / "private"
+    files = sorted([
+        f for f in basket_root.iterdir()
+        if f.is_file() and f.name != "BASKET.md"
+    ])
+
+    lines = [f"**Metis Basket** — `{basket_root}`\n"]
+    if not files:
+        lines.append("*(empty — drop inspiration documents here)*")
+    else:
+        for f in files[:50]:
+            size_kb = f.stat().st_size // 1024
+            lines.append(f"  • {f.name}  ({size_kb} KB)")
+        if len(files) > 50:
+            lines.append(f"  … and {len(files) - 50} more")
+        lines.append(f"\n**Total:** {len(files)} file{'s' if len(files) != 1 else ''} (private/ excluded)")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+@app.tool()
+async def promote_basket_item(source_path: str, target_path: str) -> list[TextContent]:
+    """Move a basket item to a stable project folder (promote from basket to active storage).
+
+    Refuses to touch basket/private/ items.
+
+    Args:
+        source_path: Absolute path to the file in basket/ to promote.
+        target_path: Absolute destination path (file or folder).
+    """
+    import shutil
+
+    basket_root = paths.root / "basket"
+    src = Path(source_path)
+
+    # Safety: must be inside basket/, must not be inside private/
+    try:
+        src.relative_to(basket_root)
+    except ValueError:
+        return [TextContent(type="text", text=f"Source must be inside the basket folder: {basket_root}")]
+
+    private_dir = basket_root / "private"
+    try:
+        src.relative_to(private_dir)
+        return [TextContent(type="text", text="Cannot promote items from basket/private/ — personal data must stay protected.")]
+    except ValueError:
+        pass  # good — not in private
+
+    if not src.exists():
+        return [TextContent(type="text", text=f"Source file not found: {source_path}")]
+
+    dest = Path(target_path)
+    if dest.is_dir():
+        dest = dest / src.name
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dest))
+        return [TextContent(type="text", text=f"Promoted:\n  {src}\n→ {dest}")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error promoting file: {e}")]
+
+
+@app.tool()
+async def remove_tracked_file(path: str) -> list[TextContent]:
+    """Stop tracking a file so Metis no longer watches it for changes.
+
+    Removes a single file from the tracked-files list (the files the dashboard
+    Planning tab scans for activity). Use this when a file is no longer relevant
+    or was added by mistake. The file on disk is never touched — only its
+    tracking record is deleted. The inverse of add_tracked_file.
+
+    Args:
+        path: Absolute path of the file to stop tracking. Must match the path
+            exactly as it was registered.
+
+    Returns:
+        A confirmation that tracking stopped, or a note if the path was not in
+        the tracking list.
+    """
+    if not paths.db.exists():
+        return [TextContent(type="text", text=f"Database not found: {paths.db}")]
+
+    try:
+        with connect(paths.db) as conn:
+            _ensure_tracked_files(conn)
+            cur = conn.execute("DELETE FROM tracked_files WHERE path = ?", (path,))
+            conn.commit()
+
+            if cur.rowcount == 0:
+                return [TextContent(type="text", text=f"File not found in tracking list: {path}")]
+
+        return [TextContent(type="text", text=f"Stopped tracking: {path}")]
+
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error removing tracked file: {e}")]

@@ -1,0 +1,105 @@
+<div>
+  <h2 class="sec-label u-mb-2">
+    Priority Tasks
+    <span class="sec-label-tail">BLOCKED · STARRED · OPEN</span>
+  </h2>
+  <div class="panel">
+    {% if tasks %}
+      {% set ns = namespace(last_section='') %}
+      {% for task in tasks %}
+        {% if task.section != ns.last_section %}
+          {% set ns.last_section = task.section %}
+          <div class="u-rule" style="padding:var(--m-space-1) var(--m-space-3);background:var(--m-surface-2);">
+            {% if task.section == 'blocked' %}
+            <span class="u-mono" style="letter-spacing:0.12em;color:var(--m-warn);">BLOCKED</span>
+            {% elif task.section == 'starred' %}
+            <span class="u-label">STARRED</span>
+            {% else %}
+            <span class="u-label">OLDEST OPEN</span>
+            {% endif %}
+          </div>
+        {% endif %}
+        <div class="todo-row" data-task-id="{{ task.id }}" data-project-id="{{ task.project_id }}"
+             style="border-left:{% if task.section == 'blocked' %}2px solid var(--m-warn){% elif task.section == 'starred' %}2px solid var(--m-ochre-deep){% else %}2px solid transparent{% endif %};">
+          <!-- done toggle -->
+          <span class="todo-check" onclick="todayTaskDone('{{ task.id }}', this)"
+                style="cursor:pointer;" title="Mark done" role="button" tabindex="0">
+            {% if task.status == 'done' or task.status == 'completed' %}
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 8 7 11 12 5"/>
+            </svg>
+            {% endif %}
+          </span>
+          <!-- title + project badge -->
+          <span class="todo-title u-grow">
+            {{ task.title or 'Untitled task' }}
+            {% if task.project %}
+            <span class="u-label" style="margin-left:6px;letter-spacing:.06em;">{{ task.project[:22] }}</span>
+            {% endif %}
+          </span>
+          <!-- status badge -->
+          <span class="todo-meta" style="{% if task.status == 'blocked' %}color:var(--m-warn);{% endif %}">
+            {%- if task.status == 'in_progress' -%}IN PROGRESS
+            {%- elif task.status == 'blocked' -%}BLOCKED
+            {%- else -%}&mdash;
+            {%- endif -%}
+          </span>
+          {% if task.starred %}
+          <!-- unstar -->
+          <button class="u-fixed btn btn--ghost" onclick="todayTaskUnstar('{{ task.id }}', this)"
+                  title="Remove from Today (unstar)"
+                  style="padding:0 var(--m-space-1);font-size:var(--t-micro);color:var(--m-ochre-deep);opacity:.7;line-height:1;"
+                  onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'">&#9733;</button>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-row">
+        No blocked or starred tasks. All clear.
+      </div>
+    {% endif %}
+
+    <!-- Quick-add row -->
+    <div class="todo-compose">
+      <span class="todo-check todo-check--ghost">+</span>
+      <input type="text"
+             placeholder="Add a task for today…"
+             onkeydown="if(event.key==='Enter'&&this.value.trim()){addTodoRow(this);}"
+             id="todo-compose-input" aria-label="Add a task for today">
+      <span class="todo-hint">&#8629;</span>
+    </div>
+  </div>
+</div>
+
+<script>
+function addTodoRow(input) {
+  const val = input.value.trim();
+  if (!val) return;
+  const panel = input.closest('.panel');
+  const compose = input.closest('.todo-compose');
+  const row = document.createElement('div');
+  row.className = 'todo-row';
+  row.style.borderLeft = '2px solid transparent';
+  row.innerHTML = '<span class="todo-check"></span>'
+    + '<span class="todo-title u-grow">' + val.replace(/</g,'&lt;') + '</span>'
+    + '<span class="todo-meta">ADDED</span>';
+  panel.insertBefore(row, compose);
+  input.value = '';
+  const fd = new FormData(); fd.append('text', 't: ' + val);
+  fetch('/capture', {method:'POST', body: fd}).catch(()=>{});
+}
+
+async function todayTaskDone(taskId, checkEl) {
+  const row = checkEl.closest('.todo-row');
+  await fetch('/api/task/' + taskId + '/done', {method:'POST'});
+  if (row) { row.style.opacity='0.4'; row.style.textDecoration='line-through'; setTimeout(()=>row.remove(),600); }
+  showToast('Task done &#10003;');
+}
+
+async function todayTaskUnstar(taskId, btn) {
+  await fetch('/api/task/' + taskId + '/star', {method:'POST'});
+  const row = btn.closest('.todo-row');
+  if (row) { row.style.opacity='0.3'; setTimeout(()=>row.remove(),400); }
+  showToast('Task removed from Today');
+}
+</script>

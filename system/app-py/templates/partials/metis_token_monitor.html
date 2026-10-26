@@ -1,0 +1,128 @@
+{# Token monitor — totals + by-agent bars + by-model bars.
+   Inputs: runs_today, tokens_today, runs_window, tokens_window, days,
+           by_agent[], by_model[], active_model #}
+{% macro fmt_tokens(n) -%}
+  {%- if n is none -%}—{%- elif n >= 1000000 -%}{{ '%.1f' % (n/1000000) }}M
+  {%- elif n >= 1000 -%}{{ '%.1f' % (n/1000) }}K
+  {%- else -%}{{ n }}{%- endif -%}
+{%- endmacro %}
+
+{# Honesty banner (S.5): token counts only exist for a few internal automated
+   tasks — the LLM that runs most agents can't self-report its own usage, so the
+   token totals below are near-zero by design. Say so rather than mislead. #}
+{% if (tokens_window or 0) == 0 %}
+<div class="metis-note u-mb-3">
+  Token usage isn't being recorded for most runs yet — Claude can't report its own
+  token counts back to Metis, so only a few internal automated tasks show usage here.
+  The counts below reflect that. <strong style="color:var(--m-ink);">Run counts are accurate.</strong>
+</div>
+{% endif %}
+
+<div class="token-stats-row">
+  <div class="token-stat">
+    <div class="token-stat-num">{{ fmt_tokens(tokens_today) }}</div>
+    <div class="token-stat-label">tokens · today</div>
+  </div>
+  <div class="token-stat">
+    <div class="token-stat-num">{{ runs_today }}</div>
+    <div class="token-stat-label">runs · today</div>
+  </div>
+  <div class="token-stat">
+    <div class="token-stat-num">{{ fmt_tokens(tokens_window) }}</div>
+    <div class="token-stat-label">tokens · last {{ days }}d</div>
+  </div>
+  <div class="token-stat">
+    <div class="token-stat-num">{{ runs_window }}</div>
+    <div class="token-stat-label">runs · last {{ days }}d</div>
+  </div>
+</div>
+
+{# Daily trend — last 7 days. Falls back to run counts when tokens are all 0 #}
+{% set all_tokens_zero = (by_day | selectattr('tokens', 'gt', 0) | list | length) == 0 %}
+{% set any_runs = (by_day | selectattr('runs', 'gt', 0) | list | length) > 0 %}
+{% set max_runs = namespace(val=1) %}
+{% for d in by_day %}{% if d.runs > max_runs.val %}{% set max_runs.val = d.runs %}{% endif %}{% endfor %}
+
+<div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5) var(--m-space-2);">
+  <div class="u-mb-3" style="display:flex;align-items:baseline;justify-content:space-between;">
+    <div class="u-title">Daily activity</div>
+    {% if all_tokens_zero %}
+      <span class="u-label">LAST 7 DAYS · RUNS</span>
+    {% else %}
+      <span class="u-label">LAST 7 DAYS · TOKENS</span>
+    {% endif %}
+  </div>
+  {% if not any_runs and all_tokens_zero %}
+    <div class="u-ed" style="font-size:var(--t-meta);padding:var(--m-space-1) 0 var(--m-space-3);">
+      No activity yet. Start with <code class="u-mono">/metis</code> in Claude Code — activity will appear here.
+    </div>
+  {% else %}
+    <div class="token-day-strip">
+      {% for d in by_day %}
+      {% if all_tokens_zero %}
+        {% set bar_pct = (d.runs / max_runs.val * 100) if max_runs.val > 0 else 0 %}
+        <div class="token-day-col" data-today="{{ 'true' if d.is_today else 'false' }}" title="{{ d.day }}: {{ d.runs }} run{{ 's' if d.runs != 1 else '' }}">
+          <div class="token-day-bar" style="height: {{ [bar_pct, 4] | max if d.runs > 0 else 0 }}%;"></div>
+          <div class="token-day-label">{{ d.label }}</div>
+        </div>
+      {% else %}
+        <div class="token-day-col" data-today="{{ 'true' if d.is_today else 'false' }}" title="{{ d.day }}: {{ d.tokens }} tokens, {{ d.runs }} runs">
+          <div class="token-day-bar" style="height: {{ [d.pct, 4] | max if d.tokens > 0 else 0 }}%;"></div>
+          <div class="token-day-label">{{ d.label }}</div>
+        </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+
+<div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5);">
+  <div class="u-mb-4" style="display:flex;align-items:baseline;justify-content:space-between;">
+    <div class="u-title u-title--lg">By specialist</div>
+    <span class="u-label">LAST {{ days }}D · TOP 12</span>
+  </div>
+  {% if by_agent %}
+    {% set max_runs_a = namespace(val=1) %}{% for a in by_agent %}{% if a.runs > max_runs_a.val %}{% set max_runs_a.val = a.runs %}{% endif %}{% endfor %}
+    {% for a in by_agent %}
+    {% set show_runs = a.total == 0 %}
+    {% set bar_w = (a.runs / max_runs_a.val * 100) if show_runs else a.pct %}
+    <div class="token-bar-row">
+      <div class="token-bar-name" title="{{ a.agent_slug }} · {{ a.runs }} run{{ 's' if a.runs != 1 else '' }}">{{ a.agent_slug }}</div>
+      <div class="token-bar-track">
+        <div class="token-bar-fill" style="width: {{ bar_w }}%;"></div>
+      </div>
+      <div class="token-bar-value">{% if show_runs %}{{ a.runs }}r{% else %}{{ fmt_tokens(a.total) }}{% endif %}</div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-2) 0;">No activity in the last {{ days }} days.</div>
+  {% endif %}
+</div>
+
+<div class="u-rule" style="padding:var(--m-space-4) var(--m-space-5);">
+  <div class="u-mb-4" style="display:flex;align-items:baseline;justify-content:space-between;">
+    <div class="u-title u-title--lg">By model</div>
+    <span class="u-label">DEFAULT · {{ active_model|upper }}</span>
+  </div>
+  {% if by_model and by_model|length > 0 and (by_model|length > 1 or by_model[0].model != 'unspecified') %}
+    {% for m in by_model %}
+    <div class="token-bar-row" data-tone="ochre">
+      <div class="token-bar-name">{{ m.model }} <span style="color:var(--m-muted);">· {{ m.runs }}r</span></div>
+      <div class="token-bar-track">
+        <div class="token-bar-fill" style="width: {{ m.pct }}%;"></div>
+      </div>
+      <div class="token-bar-value">{{ fmt_tokens(m.total) }}</div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="u-ed" style="font-size:var(--t-small);padding:var(--m-space-2) 0;">
+      No per-model data yet. Newer agent runs will start recording the model used; older runs show as <code class="u-mono">unspecified</code>.
+    </div>
+  {% endif %}
+</div>
+
+<div style="padding:var(--m-space-4) var(--m-space-5);">
+  <div class="metis-note">
+    Session and weekly token limits are managed by Anthropic on the API side and are not exposed to client apps. The numbers above show what your local Metis runs have used.
+  </div>
+</div>

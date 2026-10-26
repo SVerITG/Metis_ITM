@@ -1,0 +1,174 @@
+#!/bin/bash
+# test-mcp.sh — Smoke-test the Metis MCP server on THIS system.
+#
+# Validates the things that actually break installs across systems:
+#   platform detection · venv/python · package import · tool registration ·
+#   DB reachable + schema · embedding model loads · doctor health · a real
+#   read-only tool call · stale-install check.
+#
+# Exit 0 = healthy, exit 1 = a hard failure. Safe to run any time (read-only).
+# Works on WSL, Linux, macOS, Docker.
+#
+# USAGE:  bash tools/test-mcp.sh
+
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+VENV="$HOME/.local/share/metis-mcp/.venv"
+PY="$VENV/bin/python3"
+export METIS_RC_ROOT="${METIS_RC_ROOT:-$REPO_ROOT}"
+
+PASS=0; FAIL=0; WARN=0
+ok()   { echo "  ✓ $1"; PASS=$((PASS+1)); }
+warn() { echo "  ⚠ $1"; WARN=$((WARN+1)); }
+bad()  { echo "  ✗ $1"; FAIL=$((FAIL+1)); }
+
+echo "════════════════════════════════════════════════════"
+echo "  Metis MCP server — smoke test"
+echo "════════════════════════════════════════════════════"
+
+# ── Platform ─────────────────────────────────────────────────────────────────
+PLAT="unknown"
+case "$(uname -s)" in
+  Linux)  if grep -qi microsoft /proc/version 2>/dev/null; then PLAT="WSL"; \
+          elif [ -f /.dockerenv ]; then PLAT="Docker"; else PLAT="Linux"; fi ;;
+  Darwin) PLAT="macOS" ;;
+esac
+echo "  platform: $PLAT · root: $METIS_RC_ROOT"
+
+# ── 1. venv python ───────────────────────────────────────────────────────────
+if [ -x "$PY" ]; then ok "venv python present ($($PY --version 2>&1))"
+else bad "venv python missing at $PY — run setup-mcp.sh"; echo "RESULT: FAIL"; exit 1; fi
+
+# ── 2-9. Python-side checks in one process ───────────────────────────────────
+"$PY" - <<'PYEOF'
+import sys, os
+ok=lambda m:print("  ✓ "+m); warn=lambda m:print("  ⚠ "+m); bad=lambda m:print("  ✗ "+m)
+fails=0
+
+# 2. package import + resilient loader
+try:
+    import metis_mcp.server as s
+    from metis_mcp.app_instance import app
+    n=len(app._tool_manager._tools) if hasattr(app,"_tool_manager") else 0
+    failed=getattr(s,"FAILED_MODULES",{})
+    ok(f"package imports — {n} tools registered")
+    if failed:
+        warn(f"{len(failed)} tool module(s) degraded: "+", ".join(failed))
+    else:
+        ok("all tool modules loaded")
+    inst=getattr(__import__('metis_mcp'),'__file__','')
+    print(f"  · running from: {'installed package' if 'site-packages' in inst else 'SOURCE (dev)'}")
+except Exception as e:
+    bad(f"package import FAILED: {type(e).__name__}: {e}"); sys.exit(2)
+
+# 2b. MCP prompts registered (Claude Desktop reaches Metis via these)
+try:
+    import asyncio
+    prompts=asyncio.run(app.list_prompts())
+    pnames={p.name for p in prompts}
+    if "metis" not in pnames:
+        warn(f"{len(prompts)} prompts registered but 'metis' router MISSING — Desktop routing broken")
+    elif len(prompts) < 10:
+        warn(f"only {len(prompts)} prompts registered — agent/workflow prompts may have failed (Desktop reach reduced)")
+    else:
+        ok(f"{len(prompts)} MCP prompts registered (metis router + agents + workflows)")
+except Exception as e:
+    warn(f"prompt registration check failed: {type(e).__name__}: {e}")
+
+# 2c. The load-bearing tools are actually REGISTERED, and no private helper leaked.
+#
+# Why this check exists (2026-08-12): a new helper was inserted between an
+# `@app.tool()` decorator and the function below it. Python binds a decorator to
+# whatever function comes next, so the decorator silently jumped — publishing the
+# private `_maybe_run_learning_loop` as a tool and DE-REGISTERING
+# `session_bootstrap`. The server started fine, imports passed, the tool COUNT was
+# unchanged, and nothing anywhere errored. Only a name-level assertion catches it.
+try:
+    import asyncio
+    names={t.name for t in asyncio.run(app.list_tools())}
+    required=["session_bootstrap","run_metis","save_session_event","get_agent_context",
+              "log_agent_run","write_reflexion","save_session_summary","recall","remember"]
+    missing=[t for t in required if t not in names]
+    if missing:
+        bad("load-bearing tools NOT REGISTERED: "+", ".join(missing)); fails+=1
+    else:
+        ok(f"all {len(required)} load-bearing tools registered")
+    private=sorted(n for n in names if n.startswith("_"))
+    if private:
+        bad("private helper(s) exposed as tools: "+", ".join(private)); fails+=1
+    else:
+        ok("no private helpers exposed as tools")
+except Exception as e:
+    warn(f"tool-name check failed: {type(e).__name__}: {e}")
+
+# 3. DB reachable + key tables
+try:
+    from metis_mcp.config import paths
+    import sqlite3
+    c=sqlite3.connect(str(paths.db), timeout=10)
+    tabs={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    need={"tasks","projects","knowledge_databases","pdf_chunks","episodic_memory"}
+    miss=need-tabs
+    if miss: warn(f"DB reachable but missing tables: {miss}")
+    else: ok(f"DB reachable — {len(tabs)} tables")
+except Exception as e:
+    bad(f"DB check failed: {e}"); fails+=1
+
+# 4. embedding model loads (the RAG/knowledge layer depends on this)
+# Go through metis_mcp.embeddings, NOT fastembed directly. Calling fastembed
+# raw uses ITS default cache, which is not where the durable model lives, so the
+# lookup falls through to the network — behind the proxy that is a ConnectError,
+# and the check reported semantic search as broken while it was working fine.
+# A health check has to exercise the path the running process actually takes.
+try:
+    from metis_mcp.embeddings import embed_query
+    v=embed_query("smoke test")
+    ok(f"embedding model loads (dim {len(v)})")
+except Exception as e:
+    warn(f"embedding model unavailable (semantic search disabled): {type(e).__name__}")
+
+# 5. doctor health
+try:
+    from metis_mcp.tools.doctor import run_doctor
+    r=run_doctor()
+    st=r["status"]
+    (ok if st=="ok" else warn)(f"doctor: {st.upper()} — {r['summary']}")
+    for ch in r["checks"]:
+        if not ch["ok"] and ch["severity"]=="fail":
+            bad(f"  doctor FAIL: {ch['name']} — {ch.get('detail','')[:80]}"); fails+=1
+except Exception as e:
+    warn(f"doctor could not run: {e}")
+
+# 6. a real read-only tool call (knowledge DB list)
+try:
+    import asyncio
+    from metis_mcp.tools.knowledge_db import list_knowledge_databases
+    t=asyncio.run(list_knowledge_databases())
+    if t and t[0].text: ok("sample tool call (list_knowledge_databases) works")
+    else: warn("sample tool returned empty")
+except Exception as e:
+    bad(f"sample tool call FAILED: {type(e).__name__}: {e}"); fails+=1
+
+sys.exit(1 if fails else 0)
+PYEOF
+PYRC=$?
+
+# ── Structural audit — code that looks wired but never runs ──────────────────
+# WARN, never a hard fail. Its findings (a fossil table, a hollow panel, an
+# unreached guard) are decisions to take deliberately, not build breaks. What
+# matters is that they stay VISIBLE: every defect of this class found on
+# 2026-08-12 was invisible precisely because nothing ever printed it.
+if [ -f "$REPO_ROOT/tools/audit-structural.py" ]; then
+    AUDIT_OUT="$("$PY" "$REPO_ROOT/tools/audit-structural.py" 2>/dev/null)"
+    N_HIGH="$(printf '%s' "$AUDIT_OUT" | grep -cE '^    (system/|[a-z_]+ +rows=)' || true)"
+    if printf '%s' "$AUDIT_OUT" | grep -q "no high-severity findings"; then
+        ok "structural audit clean — no unreached guards or unfillable tables"
+    else
+        warn "structural audit: ${N_HIGH:-?} finding(s) — run: python3 tools/audit-structural.py --all"
+    fi
+fi
+
+echo "════════════════════════════════════════════════════"
+if [ "$PYRC" -eq 0 ]; then echo "  RESULT: HEALTHY"; exit 0
+else echo "  RESULT: PROBLEMS DETECTED — see ✗ rows above"; exit 1; fi

@@ -1,0 +1,64 @@
+{% from "partials/_empty.html" import panel as empty_panel %}
+{# signal_strength → CSS color helper #}
+
+<div id="knowledge-news-signals">
+  <h2 class="sec-label u-mb-3">
+    <span>Signals</span>
+    <span class="tail">{{ total }} ITEMS · NEWS · INTELLIGENCE</span>
+  </h2>
+
+  {% if domains %}
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:var(--m-space-4);">
+    {% for domain, items in domains.items() %}
+    <div class="panel panel--clip">
+      <!-- Domain header -->
+      <div class="u-row u-row--between u-rule" style="padding:var(--m-space-3) var(--m-space-4);">
+        <span class="u-mono" style="letter-spacing:0.16em;text-transform:uppercase;color:var(--m-ink);">{{ domain }}</span>
+        <span class="u-label">
+          {{ items | length }} SIGNAL{% if items | length != 1 %}S{% endif %}
+        </span>
+      </div>
+      <!-- Signal rows -->
+      {% for s in items[:5] %}
+      <div style="padding:10px 16px;{% if not loop.last %}border-bottom:1px solid var(--m-rule-soft);{% endif %}">
+        <div class="u-row u-row--top">
+          <!-- Signal strength dot -->
+          <div style="margin-top:4px;flex-shrink:0;width:6px;height:6px;border-radius:50%;
+                      background:{% set _str = (s.signal_strength or '')|upper %}{% if _str == 'HIGH' %}var(--m-accent){% elif _str == 'MEDIUM' %}var(--m-ochre-deep){% else %}var(--m-muted){% endif %};"></div>
+          <div class="u-grow">
+            <div class="u-title u-title--sm" style="line-height:1.35;margin-bottom:var(--m-space-1);">
+              {% if s.source_url %}
+              <a class="hov-ink" href="{{ s.source_url }}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">{{ s.title }}</a>
+              {% else %}
+              {{ s.title }}
+              {% endif %}
+            </div>
+            {% if s.summary %}
+            <div class="u-ed" style="font-size:var(--t-micro);line-height:1.5;">
+              {% if s.summary | length > 120 %}{{ s.summary | clip(120) }}{% else %}{{ s.summary }}{% endif %}
+            </div>
+            {% endif %}
+            <div class="u-label" style="margin-top:var(--m-space-1);display:flex;gap:var(--m-space-3);">
+              {% set _str = (s.signal_strength or '')|upper %}
+              <span style="color:{% if _str == 'HIGH' %}var(--m-accent){% elif _str == 'MEDIUM' %}var(--m-ochre-deep){% else %}var(--m-muted){% endif %};">
+                {{ _str or 'LOW' }}
+              </span>
+              <span>{{ (s.created_at or '')[:10] }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      {% if items | length > 5 %}
+      <div class="u-label u-rule-t" style="padding:var(--m-space-2) var(--m-space-4);text-align:center;">
+        + {{ items | length - 5 }} MORE SIGNALS
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  {{ empty_panel("No signals yet", "Run the News Radar to start collecting intelligence.") }}
+  {% endif %}
+</div>

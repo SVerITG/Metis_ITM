@@ -1,0 +1,225 @@
+{% from "partials/_section.html" import sec_label %}
+{# today_focus_memory.html — Focus cards enriched with memory depth indicators.
+   Context: items (list of dicts with item_type, item_id, title, subtitle, badge, badge_color, memory). #}
+<div id="today-focus">
+{% if items %}
+  {% if not bare %}{{ sec_label("Today's focus", tail=(done_today|string) + " DONE TODAY" if done_today else "STAR A TASK TO PIN IT HERE") }}{% endif %}
+  {#- The "Plan in Work" link was REMOVED 2026-09-14. It was the third route to
+     the Work surface inside one column — the add form had one, the plan panel
+     had one, and this had one. The column header now carries the single link
+     for all three partials. -#}
+  {#- A THREE-COLUMN GRID INSIDE A THIRD-WIDTH COLUMN (fixed 2026-09-14).
+      `grid grid-3` is right on the full-width surface and absurd inside the
+      Workstation, where it gave each card about 110px and turned every task
+      title into a column of single words. In the column the items are a list. -#}
+  <div class="{{ 'fx-list' if bare else 'grid grid-3 u-mb-6' }}">
+    {% for item in items %}
+    <div class="panel panel--md{{ ' fx-item' if bare else '' }}" style="position:relative;">
+      {# Dismiss button #}
+      <button class="btn btn--ghost hov-dim" type="button" hx-post="/api/today/focus/dismiss" hx-vals='{"item_type": "{{ item.item_type }}", "item_id": "{{ item.item_id }}"}' hx-target="#today-focus" hx-swap="outerHTML" hx-headers='{"Content-Type": "application/json"}' style="position:absolute;top:8px;right:10px;font-size:var(--t-body);color:var(--m-muted);line-height:1;padding:var(--m-space-1) var(--m-space-1);opacity:0.5;" title="Dismiss for today">&times;</button>
+      {# Badge row — type badge + memory depth #}
+      <div class="u-row u-mb-2">
+        <span class="{{ item.badge_class or 'stat is-quiet' }}">{{ item.badge }}</span>
+        {% if item.subtitle %}
+        <span class="u-label" style="letter-spacing:0.08em;">{{ item.subtitle }}</span>
+        {% endif %}
+        {#- Memory depth. Two changes, both from looking at a screenshot:
+
+            1. `{% if item.memory %}` is true for a dict even when the count is
+               zero, so this rendered "● 0" on four of six cards. A badge whose
+               value is zero is not a quiet badge — it is a badge that says
+               nothing, taking the same space and the same eye movement as one
+               that says 207. It now renders only when there is something to
+               count, which is the same rule as the "shallow context" line
+               removed below.
+
+            2. It was a pill tinted from --m-chart-*. That ramp encodes DATA
+               SERIES, not UI meaning (see the note at the top of styles.css),
+               and a pill means "state". This is a measurement, so it takes the
+               quiet form, and only "deep" — the case worth acting on, because
+               it means you can pick the thread straight up — earns colour. -#}
+        {% if item.memory and (item.memory.total or 0) > 0 %}
+        {% set mem = item.memory %}
+        <span class="stat u-ml-auto {{ 'is-good' if mem.level == 'deep' else 'is-quiet' }}"
+              title="{{ mem.total }} related memories across {{ mem.layers|length }} layers">
+          {{ mem.total }}
+        </span>
+        {% endif %}
+      </div>
+      {#- SHORT, THEN MORE ON CLICK (2026-09-14): "all tasks need to be described
+          very shortly and when you click on them you see more". A task title is
+          often a whole sentence — "Bundle the Windows .exe installer (Keystone
+          P1.1)" — and four of those stacked is a wall. So the row shows one
+          line, and opening it shows the rest. `<details>` because the platform
+          already does this correctly: keyboard, screen readers and find-in-page
+          all work, and it costs no JavaScript. -#}
+      {% if bare %}
+      <details class="fx-more">
+        <summary class="fx-title" title="{{ item.title }}">{{ item.title }}</summary>
+        {#- The body carries only what the closed row did NOT already show. The
+            first version repeated the title in the summary, again in the body,
+            and the project a second time under it — three renderings of one
+            task, which is the fault this whole pass exists to remove. Opening
+            simply unclamps the title; the body is for what is genuinely new. -#}
+        {% if item.memory and (item.memory.total or 0) > 0 %}
+        <div class="fx-detail">
+          <p class="fx-sub">{{ item.memory.total }} related memor{{ 'y' if item.memory.total == 1 else 'ies' }} — Metis has context on this</p>
+        </div>
+        {% endif %}
+      </details>
+      {% else %}
+      <div class="u-title" style="padding-right:16px;">{{ item.title }}</div>
+      {% endif %}
+      {# Memory context hint (for deep items) #}
+      {% if item.memory and item.memory.level == 'deep' %}
+      <div class="u-label" style="margin-top:var(--m-space-2);letter-spacing:0.04em;">
+        Deep context &middot; ready to pick up
+      </div>
+      {#- "Shallow context · may need ramp-up" used to render here. In a
+          screenshot it appeared on ALL SIX cards, which is the tell: a line
+          repeated on every item is not information, it is furniture. It was
+          meant to mark the exception and was marking the rule. The memory
+          count in the badge above already says the same thing, with a number.
+          "Deep context · ready to pick up" stays, because it is rare. -#}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {#- Everything that is NOT a commitment, counted rather than listed. This is
+      what makes finishing possible: the 53 open tasks and 224 due reviews are
+      still one click away, they simply stop presenting themselves as today's
+      work. A count invites; a card demands. -#}
+  {#- Inside a column these chips are rendered by today_also_waiting.html
+      at the foot of the whole Workstation instead — they are the backlog
+      behind all three boxes, not part of this one. -#}
+  {% if suggested and not bare %}
+  {#- READ THIS ROW OUT LOUD BEFORE CHANGING IT. It used to render as
+      "you might also 2 blocked 61 open 23 ideas 244 reviews due" — four separate
+      links with no separator and no nouns, so it scanned as one run-on phrase and
+      was reported as unreadable on 2026-09-07. Two faults, both copy:
+
+        · "2 blocked" and "61 open" are task STATUSES standing in for English.
+          Two blocked what? A reader who has not seen the tasks table cannot know.
+        · "you might also" dangles — it needs a verb, or it needs to stop
+          pretending to be a sentence and become a label.
+
+      So: it is a labelled LIST now, built as items and joined with a separator,
+      which also means a missing item cannot leave a stray dot. Counts are
+      disjoint by construction — `blocked` is its own status and `open` excludes
+      starred tasks, which are already drawn as cards above — so listing them side
+      by side does not double-count. -#}
+  {% set ns_also = namespace(items=[]) %}
+  {% if suggested.open %}{% set _ = ns_also.items.append(
+      ('/work', suggested.open ~ (' open task' if suggested.open == 1 else ' open tasks'),
+       'Tasks you have not finished, not counting the ones starred above')) %}{% endif %}
+  {% if suggested.blocked %}{% set _ = ns_also.items.append(
+      ('/work', suggested.blocked ~ ' waiting on something else',
+       'Tasks marked blocked — they cannot move until something else does')) %}{% endif %}
+  {% if suggested.ideas %}{% set _ = ns_also.items.append(
+      ('/thinking', suggested.ideas ~ (' idea' if suggested.ideas == 1 else ' ideas'),
+       'Ideas you have captured and not yet done anything with')) %}{% endif %}
+  {% if suggested.reviews %}{% set _ = ns_also.items.append(
+      ('/learning', suggested.reviews ~ ' reviews due',
+       'Flashcards due for review today')) %}{% endif %}
+  {% if ns_also.items %}
+  <div class="focus-also">
+    <span class="focus-also-lead">also waiting</span>
+    {% for href, label, why in ns_also.items %}
+      {%- if not loop.first %}<span class="focus-also-sep" aria-hidden="true">&middot;</span>{% endif %}
+      <a class="u-link" href="{{ href }}" title="{{ why }}">{{ label }}</a>
+    {%- endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+{% else %}
+  {#- THE STATE METIS COULD NOT PREVIOUSLY EXPRESS. The old copy said "No open
+      tasks or active ideas right now", which was never true — there are 53 open
+      tasks. It was the FILLER POOL running dry, described as an empty world.
+      Now the sentence is accurate: nothing you committed to is left. -#}
+  {% if not bare %}{{ sec_label("Today's focus", tail=(done_today|string) + " DONE TODAY" if done_today else "NOTHING PINNED") }}{% endif %}
+  {#- TWO EMPTY STATES, ONE OF WHICH IS NOT AN ACHIEVEMENT. Sizing them the same
+      put a large centred card reading "Nothing is pinned for today" directly
+      under a task that WAS due — the screen said, in effect, here is your work,
+      and below it, you have no work. "That's your day" earns the panel: it is
+      the reward for finishing. Nothing pinned earns one quiet line, because the
+      thing to look at is above it. -#}
+  {% if done_today %}
+  <div class="panel u-mb-6 panel--lg focus-done">
+    <p class="focus-done-line">That's your day.</p>
+    <p class="focus-done-sub">{{ done_today }} finished · nothing else you committed to is left.</p>
+
+  </div>
+  {% else %}
+  {#- The directions are gone. This line used to say "Star a task in Work, or
+      give one a date, and it lands here", which was the only guidance on offer
+      when Today had no way to add anything. There is a box directly above this
+      one now, so pointing at another surface is worse than saying nothing —
+      it sends the reader away from the control they were looking for. -#}
+  {#- NO SECOND LINK TO WORK, AND NO SECOND "nothing here". The Today plan strip
+      sits directly above this panel with its own "Work →" and its own
+      "+ Plan something", so this line was the same offer twice — reported
+      2026-09-07 as "two time the same thing". Worse, the two disagreed: the
+      strip could show a five-day training while this line said nothing was
+      pinned, because they read different stores. This panel speaks only about
+      what IT holds — starred tasks and tasks with a date. -#}
+  {#- Inside the column this is the ONLY empty line, and it appears only when
+      nothing at all is on today — nothing planned, nothing starred, nothing due.
+      The moment any one of those exists the sentence goes, rather than sitting
+      above real content contradicting it. -#}
+  {%- if bare %}
+    {%- if not plan_n %}
+  <p class="focus-none">Nothing on today yet.</p>
+    {%- endif %}
+  {%- else %}
+  <p class="focus-none u-mb-4">Nothing starred, and nothing due.</p>
+  {%- endif %}
+  {% endif %}
+  {#- Everything that is NOT a commitment, counted rather than listed. This is
+      what makes finishing possible: the 53 open tasks and 224 due reviews are
+      still one click away, they simply stop presenting themselves as today's
+      work. A count invites; a card demands. -#}
+  {#- Inside a column these chips are rendered by today_also_waiting.html
+      at the foot of the whole Workstation instead — they are the backlog
+      behind all three boxes, not part of this one. -#}
+  {% if suggested and not bare %}
+  {#- READ THIS ROW OUT LOUD BEFORE CHANGING IT. It used to render as
+      "you might also 2 blocked 61 open 23 ideas 244 reviews due" — four separate
+      links with no separator and no nouns, so it scanned as one run-on phrase and
+      was reported as unreadable on 2026-09-07. Two faults, both copy:
+
+        · "2 blocked" and "61 open" are task STATUSES standing in for English.
+          Two blocked what? A reader who has not seen the tasks table cannot know.
+        · "you might also" dangles — it needs a verb, or it needs to stop
+          pretending to be a sentence and become a label.
+
+      So: it is a labelled LIST now, built as items and joined with a separator,
+      which also means a missing item cannot leave a stray dot. Counts are
+      disjoint by construction — `blocked` is its own status and `open` excludes
+      starred tasks, which are already drawn as cards above — so listing them side
+      by side does not double-count. -#}
+  {% set ns_also = namespace(items=[]) %}
+  {% if suggested.open %}{% set _ = ns_also.items.append(
+      ('/work', suggested.open ~ (' open task' if suggested.open == 1 else ' open tasks'),
+       'Tasks you have not finished, not counting the ones starred above')) %}{% endif %}
+  {% if suggested.blocked %}{% set _ = ns_also.items.append(
+      ('/work', suggested.blocked ~ ' waiting on something else',
+       'Tasks marked blocked — they cannot move until something else does')) %}{% endif %}
+  {% if suggested.ideas %}{% set _ = ns_also.items.append(
+      ('/thinking', suggested.ideas ~ (' idea' if suggested.ideas == 1 else ' ideas'),
+       'Ideas you have captured and not yet done anything with')) %}{% endif %}
+  {% if suggested.reviews %}{% set _ = ns_also.items.append(
+      ('/learning', suggested.reviews ~ ' reviews due',
+       'Flashcards due for review today')) %}{% endif %}
+  {% if ns_also.items %}
+  <div class="focus-also">
+    <span class="focus-also-lead">also waiting</span>
+    {% for href, label, why in ns_also.items %}
+      {%- if not loop.first %}<span class="focus-also-sep" aria-hidden="true">&middot;</span>{% endif %}
+      <a class="u-link" href="{{ href }}" title="{{ why }}">{{ label }}</a>
+    {%- endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+{% endif %}
+</div>

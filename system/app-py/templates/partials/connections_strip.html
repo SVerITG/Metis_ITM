@@ -1,0 +1,64 @@
+{# ══════════════════════════════════════════════════════════════════════════════
+   connections_strip.html — the ambient cross-pollination strip.
+
+   Dropped into any surface via a lazy HTMX load:
+     <div hx-get="/api/partial/connections/paper/{{ id }}" hx-trigger="revealed"></div>
+
+   This is the README's core promise made visible ON the surface you're already on,
+   instead of hidden in a Thinking tab. One shared partial → one consistent look
+   everywhere. Design tokens only; 11px floor; each row is a real link so the item
+   is no longer a dead end.
+   ══════════════════════════════════════════════════════════════════════════════ #}
+
+{% set source_meta = {
+  "library":  ("Paper",   "var(--m-accent)",  "/knowledge"),
+  "meeting":  ("Meeting", "var(--m-ochre)",   "/meetings"),
+  "news":     ("News",    "var(--m-ok)",      "/news"),
+  "idea":     ("Idea",    "var(--m-info)",    "/thinking"),
+  "note":     ("Note",    "var(--m-info)",    "/thinking"),
+  "project":  ("Project", "var(--m-accent)",  "/work"),
+  "task":     ("Task",    "var(--m-muted)",   "/work"),
+} %}
+
+{% if matches %}
+<div style="margin-top:var(--m-space-4);border-top:1px solid var(--m-rule);padding-top:12px;">
+    {#- A real <h2>, not a styled <div>: this is the section heading for the
+      panel and the page had no outline entry for it. -#}
+  <h2 class="sec-label u-mb-2">
+    {#- NAME THE SUBJECT. Reported 2026-08-31: "the 'connects to' section, it is
+        not clear to what it relates." It was not clear because the heading
+        never said — the route has always passed `seed_title` (the most
+        recently touched project, which is what the matches are drawn from) and
+        the heading simply ignored it. A list of connections with no stated
+        subject is a list of unrelated links. -#}
+    <span>Connects to
+      {%- if seed_title %} <em class="conn-seed">{{ seed_title }}</em>{% endif %}</span>
+    {#- The tail carries the COUNT only. The explanation of why this project was
+        chosen used to sit here too; in the Reflection rail that made a
+        four-line heading out of a label. It is a sentence, so it is set as one,
+        below. -#}
+    <span class="tail">· {{ matches|length }}</span>
+  </h2>
+  {% if seed_title %}
+  <p class="conn-why">Drawn from your most recently touched project.</p>
+  {% endif %}
+
+  {% for m in matches %}
+    {% set meta = source_meta.get(m.source, ("Memory", "var(--m-muted)", "/thinking")) %}
+    <a class="u-rule" href="{{ meta[2] }}"
+       style="display:flex;align-items:baseline;gap:var(--m-space-3);padding:var(--m-space-2) 0;text-decoration:none;color:inherit;">
+      <span style="font-family:var(--m-mono);font-size:11px;letter-spacing:0.1em;
+                   text-transform:uppercase;color:{{ meta[1] }};flex-shrink:0;width:64px;">
+        {{ meta[0] }}
+      </span>
+      <span style="font-size:var(--t-small);line-height:1.35;color:var(--m-ink);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+        {{ m.title | clip(120) }}
+      </span>
+    </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="u-mono" style="margin-top:var(--m-space-4);border-top:1px solid var(--m-rule);padding-top:12px;letter-spacing:0.1em;color:var(--m-muted);">
+  No connections yet — they appear as your library and notes grow.
+</div>
+{% endif %}

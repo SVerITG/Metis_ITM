@@ -1,0 +1,152 @@
+<div class="u-row" id="lm-setup-modal" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:800;background:rgba(0,0,0,0.35);justify-content:center;">
+  <div class="panel m-drawer-top panel--flush" style="width:540px;max-width:96vw;box-shadow:0 8px 32px rgba(0,0,0,0.22);">
+
+    <div class="u-row u-row--between u-rule" style="padding:var(--m-space-4) var(--m-space-5) var(--m-space-3);">
+      <div class="kicker kicker--ochre" style="margin:0;">
+        <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><line x1="8" y1="5" x2="8" y2="8"/></svg>
+        LIVE MEETING — SETUP
+      </div>
+      <button class="u-label btn btn--ghost" onclick="closeLiveSession()" style="padding:var(--m-space-1) var(--m-space-2);">ESC</button>
+    </div>
+
+    <div style="padding:var(--m-space-5);">
+
+      <div class="u-mb-4">
+        <label class="u-label u-mb-1" style="display:block;">MEETING TITLE</label>
+        <input class="u-tile" id="lm-setup-title" type="text" autofocus
+               placeholder="e.g. Research coordination meeting"
+               style="width:100%;box-sizing:border-box;padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-body);color:var(--m-ink);" aria-label="e.g. Research coordination meeting">
+      </div>
+
+      <div class="u-mb-4">
+        <label class="u-label u-mb-2" style="display:block;">PARTICIPANTS — first name or full name</label>
+        <div id="lm-speaker-inputs" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--m-space-2);">
+          <input class="lm-setup-speaker u-tile" type="text" placeholder="Name 1 (first speaker)"
+                 style="padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-small);color:var(--m-ink);" aria-label="Name 1 (first speaker)">
+          <input class="lm-setup-speaker u-tile" type="text" placeholder="Name 2"
+                 style="padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-small);color:var(--m-ink);" aria-label="Name 2">
+          <input class="lm-setup-speaker u-tile" type="text" placeholder="Name 3 (optional)"
+                 style="padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-small);color:var(--m-ink);" aria-label="Name 3 (optional)">
+          <input class="lm-setup-speaker u-tile" type="text" placeholder="Name 4 (optional)"
+                 style="padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-small);color:var(--m-ink);" aria-label="Name 4 (optional)">
+        </div>
+      </div>
+
+      <div class="u-mb-4" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--m-space-3);">
+        <div>
+          <label class="u-label u-mb-1" style="display:block;">LANGUAGE</label>
+          <select class="u-tile" id="lm-setup-lang"
+                  style="width:100%;padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-small);color:var(--m-ink);">
+            <option value="en-US">English (US)</option>
+            <option value="en-GB">English (UK)</option>
+            <option value="fr-FR">French</option>
+            <option value="nl-NL">Dutch</option>
+            <option value="nl-BE">Dutch (Belgium)</option>
+            <option value="fr-BE">French (Belgium)</option>
+          </select>
+            <div class="u-mono" style="color:var(--m-muted);margin-top:var(--m-space-1);">
+              Local keeps the recording on this computer — the right choice if the meeting
+              covers patients or unpublished work.
+            </div>
+        </div>
+        <div>
+          <label class="u-label u-mb-1" style="display:block;">TRANSCRIPTION</label>
+          <select class="u-tile" id="lm-setup-mode"
+                  style="width:100%;padding:var(--m-space-2) var(--m-space-3);font-family:var(--m-sans);font-size:var(--t-small);color:var(--m-ink);">
+            <option value="server">Whisper — stays on this computer (recommended)</option>
+            <option value="voxtral">Voxtral — sent to Mistral's cloud · diarization built-in</option>
+            <option value="browser">Browser — sent to Google · instant, Chrome/Edge only</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Mode description — updates dynamically -->
+      <div class="u-mb-3" id="lm-mode-hint" style="background:var(--m-surface-2);border-radius:var(--m-radius);padding:var(--m-space-3) var(--m-space-4);font-family:var(--m-sans);font-size:var(--t-meta);color:var(--m-muted);line-height:1.6;">
+        <strong style="color:var(--m-ink);">Whisper (recommended):</strong> Transcribes every few seconds via your local GPU — works in any browser, no cloud needed. Connections to your library and past meetings appear alongside as you speak.
+      </div>
+
+      <!-- Voice ID status — loaded async -->
+      <div class="u-label u-mb-3" id="lm-voice-id-status">
+        Checking voice profiles…
+      </div>
+
+      <!-- Microphone permission hint — visible upfront so users don't get confused -->
+      <div class="u-mb-4" style="display:flex;gap:var(--m-space-3);align-items:flex-start;background:var(--m-surface);border:1px dashed var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-3) var(--m-space-4);font-family:var(--m-sans);font-size:var(--t-meta);color:var(--m-muted);line-height:1.55;">
+        <svg class="u-fixed" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--m-accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-top:1px;">
+          <rect x="6" y="2" width="4" height="8" rx="2"/>
+          <path d="M3.5 7v1a4.5 4.5 0 0 0 9 0V7"/>
+          <line x1="8" y1="12.5" x2="8" y2="14.5"/>
+        </svg>
+        <div>
+          When you click <strong style="color:var(--m-ink);">Start listening</strong>, your browser will ask for microphone access. Allow it. The first transcript appears after a few seconds of speaking.
+        </div>
+      </div>
+
+      <div style="display:flex;gap:var(--m-space-2);">
+        <button class="btn btn--primary btn--caps u-grow" onclick="beginLiveMeeting()">
+          <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" style="margin-right:4px;"><circle cx="8" cy="8" r="6"/></svg>
+          Start Listening
+        </button>
+        <button class="btn btn--ghost btn--caps" onclick="closeLiveSession()">Cancel</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var sel = document.getElementById('lm-setup-mode');
+  var hint = document.getElementById('lm-mode-hint');
+  if (!sel || !hint) return;
+  sel.addEventListener('change', function() {
+    if (sel.value === 'voxtral') {
+      hint.innerHTML = '<strong style="color:var(--m-chart-5);">Voxtral (cloud):</strong> Uses Mistral&rsquo;s speech API with built-in speaker diarization &mdash; no local model needed. Requires MISTRAL_API_KEY. Excellent accuracy, 13 languages, speakers identified automatically.';
+    } else if (sel.value === 'browser') {
+      hint.innerHTML = '<strong style="color:var(--m-ink);">Browser speech:</strong> Transcribes instantly as you speak — text appears word by word. Requires Chrome or Edge. No model used.';
+    } else {
+      hint.innerHTML = '<strong style="color:var(--m-ink);">Whisper (recommended):</strong> Transcribes every few seconds via your local GPU — works in any browser, no cloud needed. Connections to your library and past meetings appear alongside as you speak.';
+    }
+  });
+
+  // Load voice ID + Voxtral status
+  fetch('/api/transcription/status').then(r => r.json()).then(s => {
+    const el = document.getElementById('lm-voice-id-status');
+    if (!el) return;
+    let lines = [];
+
+    // Voxtral availability
+    if (s.voxtral) {
+      lines.push('<span style="color:var(--m-chart-5);">▲ VOXTRAL AVAILABLE</span> — cloud transcription with native diarization');
+    } else {
+      // Disable voxtral option if no API key
+      const voxOpt = sel.querySelector('option[value="voxtral"]');
+      if (voxOpt) { voxOpt.disabled = true; voxOpt.textContent += ' (no API key)'; }
+    }
+
+    // GPU info
+    if (s.gpu) {
+      lines.push(`<span style="color:var(--m-ok);">▲ GPU: ${s.gpu}</span>`);
+    }
+
+    // Voice profiles
+    if (s.voice_profiles) {
+      fetch('/api/speakers').then(r => r.json()).then(speakers => {
+        if (speakers.length) {
+          const names = speakers.map(sp => sp.name).join(', ');
+          lines.push(`<span style="color:var(--m-ok);">▲ VOICE ID ACTIVE</span> — ${speakers.length} profile${speakers.length !== 1 ? 's' : ''}: ${names}`);
+        } else {
+          lines.push('VOICE ID READY — no profiles enrolled yet');
+        }
+        el.innerHTML = lines.join('<br>');
+      });
+    } else {
+      lines.push('VOICE ID UNAVAILABLE — speaker names assigned manually');
+      el.innerHTML = lines.join('<br>');
+    }
+  }).catch(() => {
+    const el = document.getElementById('lm-voice-id-status');
+    if (el) el.textContent = '';
+  });
+})();
+</script>

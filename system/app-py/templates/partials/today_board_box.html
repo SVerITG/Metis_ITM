@@ -1,0 +1,267 @@
+{# today_board_box.html — Board card for Outbreaks / Events / Funding.
+   Context: board (str), items (list of dicts), total (int), show_all (bool).
+   Each item: id, title, url, source, starred, auto_added, created_at. #}
+{% from "partials/_update_menu.html" import update_menu %}
+{#- The three board markers were ⚠ / 📅 / ★ — three emoji standing where the rest
+    of this application draws inline SVG. Two problems, and the second is the one
+    that showed: they render at different weights and, on most platforms, 📅 comes
+    out as a full-colour glyph that ignores the theme entirely, so the Events card
+    carried a bright blue calendar into every dark palette. Stroke icons inherit
+    `currentColor`, so each one now takes its own board's accent and follows the
+    theme like everything else.
+
+    NOT touched, deliberately: ★/☆ on the star button, ✓, and ✦ for "Claude
+    Desktop". Those are controls and status marks used consistently across the
+    whole app — swapping them would be a redesign, not a fix. -#}
+{% set bm = {
+  'outbreaks': {'label': 'Outbreaks',  'cls': 'alert'},
+  'events':    {'label': 'Events',     'cls': 'accent'},
+  'funding':   {'label': 'Funding',    'cls': 'ok'}
+} %}
+{% set m = bm[board] %}
+
+{% macro board_icon(board) %}
+<svg class="board-box-icon" viewBox="0 0 16 16" width="14" height="14" fill="none"
+     stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+     stroke-linejoin="round" aria-hidden="true">
+  {%- if board == 'outbreaks' -%}
+    {#- a spreading point: the thing itself, not a warning about it -#}
+    <circle cx="8" cy="8" r="1.6"/><circle cx="8" cy="8" r="4.2" opacity=".65"/>
+    <circle cx="8" cy="8" r="6.8" opacity=".35"/>
+  {%- elif board == 'events' -%}
+    <rect x="2" y="3.5" width="12" height="10.5" rx="1.5"/>
+    <path d="M2 6.5h12"/><path d="M5.5 2v3M10.5 2v3"/>
+  {%- else -%}
+    {#- funding: an award ribbon -#}
+    <circle cx="8" cy="6" r="4"/><path d="M5.6 9.4L4.5 14l3.5-2 3.5 2-1.1-4.6"/>
+  {%- endif -%}
+</svg>
+{% endmacro %}
+<div class="board-box board-box--{{ m.cls }}" id="board-{{ board }}">
+
+  {# ── Header ── #}
+  <div class="board-box-head">
+    {{ board_icon(board) }}
+    <span class="board-box-label">{{ m.label }}</span>
+    {#- "3 new · 21" beats "21". The bare total was the same number every
+        morning, so it answered a question nobody was asking; what a reader
+        wants at 9am is how much of it they have not looked at. -#}
+    {% if total %}
+    <span class="board-box-count">
+      {% if n_unseen %}<span class="board-box-count-new">{{ n_unseen }} new</span> · {% endif %}{{ total }}
+    </span>
+    {% endif %}
+  </div>
+
+  {# ── Items ── #}
+  {% if items %}
+  <div class="board-box-list">
+    {% for item in items %}
+    {#- ONE LINE PER ITEM. Asked for 2026-09-05: "should always be just 1 line
+        so there is space for more: Name of the item with icons for Follow /
+        Pin / Ignore". Everything that used to stack under the title — source,
+        the "+N earlier" chip, the "new today" badge, and the three-line latest
+        block — is either folded into this line as a compact mark or moved into
+        the row's tooltip. Nothing was deleted from the data; it stopped being
+        given its own line.
+
+        FOLLOW and PIN are separate controls now, because they answer different
+        questions: pin is where it sits, follow is whether its newest report
+        gets fetched.
+
+        A PIN WITH A THREAD IS AN ANCHOR. Everything later about the same
+        subject sits under it, indented, one line each — so a running story
+        costs one heading plus its instalments instead of N equal rows
+        competing for the top of the board. The children are still one line
+        apiece: the 2026-09-05 rule is about ROW HEIGHT, and nesting does not
+        get to spend it back. -#}
+    {% if item._pinned and item._children %}<div class="board-thread">{% endif %}
+    <div class="board-item{% if item.auto_added %} board-item--scan{% endif %}{% if item._fresh %} is-new is-new--{{ item._fresh }}{% endif %}{% if item._pinned %} board-item--pinned{% endif %}{% if item._children %} board-item--anchor{% endif %}">
+      {#- State slot: a filled ring means "not looked at yet". -#}
+      <button type="button" class="board-seen{% if item._unseen %} board-seen--unseen{% endif %}"
+              hx-post="/api/today/board/{{ board }}/item/{{ item.id }}/seen{% if show_all %}?all=1{% endif %}"
+              hx-target="#board-{{ board }}" hx-swap="outerHTML"
+              aria-pressed="{{ 'false' if item._unseen else 'true' }}"
+              title="{% if item._unseen %}Mark as seen{% else %}Seen{% if item.seen_at %} {{ item.seen_at[:10] }}{% endif %} — click to mark unseen{% endif %}"
+              >{% if item._unseen %}●{% else %}○{% endif %}</button>
+
+      {#- The name, on one line, truncated by the browser rather than by a filter
+          so the row uses whatever width it actually has. The full title, the
+          source and any earlier instalments live in the tooltip. -#}
+      {% set tip %}{{ item.title }}{% if item.source %} · {{ item.source }}{% endif %}{% if item._n_earlier %} · +{{ item._n_earlier }} earlier instalments{% endif %}{% endset %}
+      {% if item.url %}
+      <a href="{{ item.url }}" target="_blank" rel="noopener"
+         class="board-item-title" title="{{ tip }}">{{ item.title }}</a>
+      {% else %}
+      <span class="board-item-title" title="{{ tip }}">{{ item.title }}</span>
+      {% endif %}
+
+      {#- Two marks may sit on the line, both narrow and both optional: the
+          event's own date (the most decision-relevant thing on Events and
+          Funding), and — only when following — a link to the newest matching
+          report. The report's title is in its tooltip, not on the row. -#}
+      {% if item._when %}
+      <span class="board-item-date" title="Event date / deadline">{{ item._when }}</span>
+      {% endif %}
+      {#- The thread count on the anchor. It replaces the "latest" link for a
+          pin, because one newest report is what you show when there is nothing
+          to nest under; a count says how much story there is. -#}
+      {% if item._n_children %}
+      <span class="board-thread-n"
+            title="{{ item._n_children }} report{{ '' if item._n_children == 1 else 's' }} on this subject{% if item._terms %} — matching {{ item._terms | join(' + ') }}{% endif %}{% if item._n_children > item._children | length %}; the newest {{ item._children | length }} are listed below{% endif %}">{{ item._n_children }} related</span>
+      {% endif %}
+      {% if item._latest %}
+      <a class="board-latest" href="{{ item._latest.source_url or '/news' }}"
+         {% if item._latest.source_url %}target="_blank" rel="noopener"{% endif %}
+         title="Newest report matching {{ item._latest._terms | join(' + ') }} — {{ item._latest.title }}{% if item._latest.brief_date %} ({{ item._latest.brief_date[:10] }}){% endif %}">
+        latest{% if item._latest._n > 1 %} ·&nbsp;{{ item._latest._n }}{% endif %}
+      </a>
+      {% elif item.starred %}
+      <span class="board-latest board-latest--none" title="Following — no matching report in the news stream yet">following</span>
+      {% endif %}
+
+      <span class="board-item-actions">
+        {#- Reordering appears on hover or keyboard focus. It is only meaningful
+            on a pin, and showing two arrows on every row in a box a third of the
+            page wide would cost the width the title needs. -#}
+        {% if item._pinned and item._pin_of and item._pin_of > 1 %}
+        <button type="button" class="board-move" {% if item._pin_pos == 1 %}disabled{% endif %}
+                hx-post="/api/today/board/{{ board }}/item/{{ item.id }}/pin-move"
+                hx-vals='{"direction":"up"}'
+                hx-target="#board-{{ board }}" hx-swap="outerHTML"
+                title="Move up — currently {{ item._pin_pos }} of {{ item._pin_of }}">&uarr;</button>
+        <button type="button" class="board-move" {% if item._pin_pos == item._pin_of %}disabled{% endif %}
+                hx-post="/api/today/board/{{ board }}/item/{{ item.id }}/pin-move"
+                hx-vals='{"direction":"down"}'
+                hx-target="#board-{{ board }}" hx-swap="outerHTML"
+                title="Move down — currently {{ item._pin_pos }} of {{ item._pin_of }}">&darr;</button>
+        {% endif %}
+
+        {#- FOLLOW — the subject, not the row. -#}
+        <button type="button" class="board-act board-act--follow{% if item.starred %} is-on{% endif %}"
+                hx-post="/api/today/board/{{ board }}/item/{{ item.id }}/star{% if show_all %}?all=1{% endif %}"
+                hx-target="#board-{{ board }}" hx-swap="outerHTML"
+                aria-pressed="{{ 'true' if item.starred else 'false' }}"
+                title="{% if item.starred %}Stop following this subject{% else %}Follow — its newest report appears on this row{% endif %}">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/>
+            <circle cx="8" cy="8" r="1.9"/>
+          </svg>
+        </button>
+
+        {#- PIN — the position. -#}
+        <button type="button" class="board-act board-act--pin{% if item._pinned %} is-on{% endif %}"
+                hx-post="/api/today/board/{{ board }}/item/{{ item.id }}/pin{% if show_all %}?all=1{% endif %}"
+                hx-target="#board-{{ board }}" hx-swap="outerHTML"
+                aria-pressed="{{ 'true' if item._pinned else 'false' }}"
+                title="{% if item._pinned %}Unpin — it returns to the ordinary order{% else %}Pin to the top of this board{% endif %}">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 1.5h4l-.6 4.2 2.6 2.3H4l2.6-2.3z"/><path d="M8 8v6.5"/>
+          </svg>
+        </button>
+
+        {#- IGNORE — take it off the board. -#}
+        <button type="button" class="board-act board-act--ignore"
+                hx-delete="/api/today/board/{{ board }}/item/{{ item.id }}{% if show_all %}?all=1{% endif %}"
+                hx-target="#board-{{ board }}" hx-swap="outerHTML"
+                hx-confirm="Remove this item from the board?"
+                title="Ignore — remove it from this board">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8"/>
+          </svg>
+        </button>
+      </span>
+    </div>
+
+    {#- The thread itself. No controls on a child row: it is not a board item
+        in its own right, it is part of the one above it, and giving it its own
+        follow/pin/ignore would invite exactly the flat treatment this
+        removes. -#}
+    {% if item._pinned and item._children %}
+    {% for kid in item._children %}
+    <div class="board-item board-item--child">
+      <span class="board-thread-tick" aria-hidden="true">└</span>
+      {% if kid.url %}
+      <a href="{{ kid.url }}" target="_blank" rel="noopener"
+         class="board-item-title" title="{{ kid.title }}{% if kid.kind == 'news' %} · from the news stream{% endif %}">{{ kid.title }}</a>
+      {% else %}
+      <span class="board-item-title" title="{{ kid.title }}">{{ kid.title }}</span>
+      {% endif %}
+      {% if kid.when %}
+      <span class="board-item-date board-item-date--quiet">{{ kid.when }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% if item._n_children > item._children | length %}
+    <div class="board-item board-item--child board-item--more">
+      <span class="board-thread-tick" aria-hidden="true">└</span>
+      <span class="board-item-title">+{{ item._n_children - (item._children | length) }} earlier on this subject</span>
+    </div>
+    {% endif %}
+    {% endif %}
+    {% if item._pinned and item._children %}</div>{% endif %}
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="board-box-empty">
+    No {{ board }} tracked yet.
+  </div>
+  {% endif %}
+
+  {# ── Footer ── #}
+  <div class="board-box-foot">
+    {% if n_unseen %}
+    <button type="button" class="btn btn--ghost btn--caps board-box-btn board-box-btn--seen"
+            hx-post="/api/today/board/{{ board }}/seen-all{% if show_all %}?all=1{% endif %}"
+            hx-target="#board-{{ board }}" hx-swap="outerHTML"
+            title="Mark all {{ n_unseen }} unseen {{ m.label|lower }} items as seen">✓ Seen all</button>
+    {% endif %}
+    {% if total > 5 and not show_all %}
+    <button type="button" class="btn btn--ghost btn--caps board-box-btn"
+            hx-get="/api/partial/today/board/{{ board }}?all=1"
+            hx-target="#board-{{ board }}" hx-swap="outerHTML">Show all {{ total }}</button>
+    {% elif show_all and total > 5 %}
+    <button type="button" class="btn btn--ghost btn--caps board-box-btn"
+            hx-get="/api/partial/today/board/{{ board }}"
+            hx-target="#board-{{ board }}" hx-swap="outerHTML">Collapse</button>
+    {% endif %}
+    {%- set claude_board_prompt -%}
+Update my Metis {{ m.label }} board. Search the web for current, real {% if board == 'outbreaks' %}active disease outbreaks and public-health emergencies. Mirror what WHO's Disease Outbreak News (DON) is reporting — https://www.who.int/emergencies/disease-outbreak-news — which lists only the outbreaks that matter rather than every regional press release; check ECDC's Communicable Disease Threats Report for anything DON has not posted yet. I want the main outbreaks in the world, 6-8 of them, each with its location and the date of the most recent update, and each with a start_date I can see. {{ board_prompt_outbreak_pref }}{% elif board == 'events' %}scientific congresses, conferences, symposia and short courses (each with a date) in {{ board_prompt_field }}{% else %}research funding calls, grants and fellowships (each with an application deadline) in {{ board_prompt_field }}{% endif %} relevant to my work. Then save the best 6-8 to the "{{ board }}" board using the metis-rc update_today_board tool — pass each as {title, url, date, description}. Only include items with a real working URL, then show me what you saved.
+    {%- endset -%}
+    {% set board_update_opts = [
+      {'icon': '✦', 'label': 'With Claude Desktop', 'sub': 'free · runs on your subscription, no API tokens',
+       'href': 'claude://claude.ai/new?q=' ~ (claude_board_prompt | trim | urlencode), 'primary': true,
+       'title': 'Open Claude Desktop to find & save current ' ~ m.label|lower ~ ' — no API limit.'},
+      {'icon': '↻', 'label': 'With the API', 'sub': 'searches the web now · uses API credit',
+       'hx_post': '/api/today/board/' ~ board ~ '/refresh', 'hx_target': '#board-' ~ board, 'hx_swap': 'outerHTML',
+       'title': 'Search the web via the API and refresh now (needs API credit; also runs monthly).'}
+    ] %}
+    {{ update_menu('board-' ~ board, board_update_opts, align='left') }}
+    <button type="button" class="btn btn--ghost btn--caps board-box-btn board-box-btn--add"
+            onclick="toggleBoardAdd('{{ board }}')">+ Add</button>
+  </div>
+
+  {# ── Hidden add form ── #}
+  <div id="board-add-{{ board }}" class="board-box-addform u-hide">
+    <form hx-post="/api/today/board/{{ board }}/add"
+          hx-target="#board-{{ board }}" hx-swap="outerHTML"
+          hx-encoding="multipart/form-data">
+      <input type="text" name="title" placeholder="Title" required class="board-input" aria-label="Title">
+      <input type="url" name="url" placeholder="URL (optional)" class="board-input board-input--mono" aria-label="URL (optional)">
+      <div style="display:flex;gap:var(--m-space-2);">
+        <button type="submit" class="btn btn--primary btn--caps board-box-btn">Save</button>
+        <button type="button" class="btn btn--ghost btn--caps board-box-btn"
+                onclick="toggleBoardAdd('{{ board }}')">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+function toggleBoardAdd(board) {
+  var el = document.getElementById('board-add-' + board);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+</script>

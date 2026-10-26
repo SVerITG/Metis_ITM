@@ -1,0 +1,123 @@
+{# ══════════════════════════════════════════════════════════════════════════════
+   news_tab.html — one category tab, in one of three densities.
+
+   REBUILT 2026-08-26. Two things were wrong, and the first caused the second.
+
+   1. THE WHOLE CARD WAS AN <a href>. That is why this surface had ZERO actions
+      across seven tabs and 337 links: you cannot nest a button inside an anchor
+      and have it work, because every click navigates away. The card is now a
+      <div>, the TITLE is the link, and the triage buttons sit beside it. This is
+      also the accessible shape — a card-wide anchor swallowing controls hands a
+      screen reader one enormous link and no way to reach them.
+
+   2. THERE WAS ONE DENSITY. Sixty thumbnails is a beautiful wall and a poor way
+      to skim. List / Detailed / Thumbnails now share one item macro and differ
+      only in what they show, so nothing can drift between them.
+
+   Photo and typographic cards remain equal citizens. Measured coverage:
+   policy/world-news 100% have thumbnails, epidemiology 0% — so treating an
+   image-less card as degraded would mean the researcher's own field loses to
+   BBC headlines on every screen.
+   ══════════════════════════════════════════════════════════════════════════════ #}
+{% from "partials/_item.html" import item, tag_datalist %}
+
+{% include "partials/_news_tabstrip.html" %}
+{{ tag_datalist(all_tags or []) }}
+
+{% set T = "#news-tab-body" %}
+{#- Where to send the re-render back to: the exact list this click came from. -#}
+{% set BACK = "news:" ~ active ~ ":" ~ period ~ ":" ~ view %}
+
+{% if subfilters %}
+  {# Sub-filters inside "Related to my work" — client-side, because the set is
+     small and a round-trip to hide cards would be wasteful. #}
+  <div class="u-mb-4" style="display:flex;flex-wrap:wrap;gap:var(--m-space-2);" id="news-subfilters">
+    <button type="button" class="btn btn--ghost btn--caps news-sub btn--sm" data-subj=""
+            style="font-size:var(--t-micro);" aria-pressed="true">All</button>
+    {% for subj, n in subfilters %}
+      <button type="button" class="btn btn--ghost btn--caps news-sub btn--sm" data-subj="{{ subj }}"
+              style="font-size:var(--t-micro);" aria-pressed="false">
+        {{ subj.replace('-', ' ') }} <span style="color:var(--m-muted);">{{ n }}</span>
+      </button>
+    {% endfor %}
+    {#- THE TAIL FOLDS (2026-09-15). The row is capped at six because a wrapped
+        row stops being scannable — but the subjects it is built from are meant
+        to grow, so the ones past six live behind a trigger that says how many
+        there are rather than being dropped. The six with the most behind them
+        stay in the open, because their counts are the information. -#}
+    {% if subfilters_more %}
+    <details class="nsub-more">
+      <summary class="nsub-more-b">+{{ subfilters_more | length }} more</summary>
+      <div class="nsub-more-body">
+        {% for subj, n in subfilters_more %}
+        <button type="button" class="btn btn--ghost btn--caps news-sub btn--sm" data-subj="{{ subj }}"
+                style="font-size:var(--t-micro);" aria-pressed="false">
+          {{ subj.replace('-', ' ') }} <span style="color:var(--m-muted);">{{ n }}</span>
+        </button>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+  <script>
+  (function () {
+    var wrap = document.getElementById('news-subfilters');
+    if (!wrap) return;
+    wrap.addEventListener('click', function (e) {
+      var b = e.target.closest('.news-sub');
+      if (!b) return;
+      var want = b.dataset.subj || '';
+      wrap.querySelectorAll('.news-sub').forEach(function (x) {
+        x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+      });
+      document.querySelectorAll('#news-cards [data-subj]').forEach(function (card) {
+        card.style.display = (!want || card.dataset.subj === want) ? '' : 'none';
+      });
+    });
+  })();
+  </script>
+{% endif %}
+
+{% if not cards %}
+  <div class="panel" style="padding:var(--m-space-5);">
+    <div class="u-ed" style="font-size:var(--t-body);">
+      Nothing here for {{ periods[period][1]|lower }}.
+      {% if period != 'month' %}
+        Try a longer period —
+        <button type="button" class="btn btn--ghost btn--caps"
+                hx-get="/api/partial/news/tab?tab={{ active }}&period=month&view={{ view }}"
+                hx-target="#news-tab-body" hx-swap="innerHTML"
+                style="padding:var(--m-space-1) var(--m-space-2);font-size:var(--t-micro);">this month</button>
+      {% else %}
+        If a whole month is empty, the feeds for this topic may have stopped
+        answering rather than the world going quiet.
+      {% endif %}
+    </div>
+  </div>
+{% else %}
+  <h2 class="sec-label u-mb-3">{{ spec.label }}
+    <span class="sec-label-tail">
+      {{ total }} ITEM{{ '' if total == 1 else 'S' }} · {{ periods[period][1]|upper }}
+      {%- if total > cards|length %} · SHOWING {{ cards|length }}{% endif %}
+    </span>
+  </h2>
+  {% if total > cards|length %}
+    {# Never cap silently: a grid of 60 with no note reads as "that is all there
+       is", and the period switcher then looks inert because every period fills
+       the cap. Say what was left out. #}
+    <div class="u-label u-mb-3">
+      {{ total - cards|length }} more item{{ '' if total - cards|length == 1 else 's' }} in this
+      period than shown — narrow the window
+      {%- if subfilters %} or pick a sub-topic above{% endif %}.
+    </div>
+  {% endif %}
+
+  {#- The shared item. `view` picks the layout; the row shape, the action bar
+      and their behaviour come from `_item.html` and are identical everywhere. -#}
+  <div class="list--{{ 'cards' if view == 'cards' else 'rows' }}" id="news-cards">
+    {% for c in cards %}
+      {{ item('news', c, (states or {}).get(c.id), T, BACK,
+              'card' if view == 'cards' else 'row') }}
+    {% endfor %}
+  </div>
+{% endif %}

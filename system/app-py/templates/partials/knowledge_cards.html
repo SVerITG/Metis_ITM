@@ -1,0 +1,76 @@
+{% from "partials/_empty.html" import panel as empty_panel %}
+{# The id lives on THIS root element, not on a wrapper in knowledge.html.
+   knowledge.html loads this partial with hx-swap="outerHTML", which REPLACES the
+   element carrying the id — so after the first load #knowledge-cards-area no
+   longer existed and every slipcase click was a no-op that looked like a dead
+   filter. Carrying the id in the partial makes it survive its own swap. #}
+<div id="knowledge-cards-area">
+  <h2 class="sec-label u-mb-3">
+    <span>{{ first_domain | replace('-', ' ') | title if first_domain else 'Library' }}</span>
+    <span class="tail">{{ total_cards or 0 }} VOLUMES · CLICK TO OPEN</span>
+  </h2>
+
+  <!-- Slipcase header panel -->
+  <div class="panel u-mb-4" style="padding:var(--m-space-5) var(--m-space-5);">
+    <div class="kicker">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 3 h5 a2 2 0 0 1 2 2 v8 a2 2 0 0 0 -2 -2 H2 Z"/>
+        <path d="M14 3 h-5 a2 2 0 0 0 -2 2 v8 a2 2 0 0 1 2 -2 h5 Z"/>
+      </svg>
+      <span>SLIPCASE · {{ total_cards or 0 }} CARDS</span>
+    </div>
+    <h3 style="font-family:var(--m-display);font-size:var(--t-h2);font-weight:500;margin:var(--m-space-3) 0 var(--m-space-2);color:var(--m-ink);">
+      {{ first_domain | replace('-', ' ') | title if first_domain else 'Knowledge Archive' }}
+    </h3>
+    <p class="ed" style="margin:0;font-size:var(--t-body);">
+      Open-access books and reports held locally. Click any card to read it.
+      {% if first_domain %}Showing the <em>{{ first_domain | replace('-', ' ') }}</em> slipcase.{% endif %}
+    </p>
+  </div>
+
+  <!-- 3-column index card grid -->
+  <div class="grid grid-3">
+    {% if cards %}
+      {% for card in cards %}
+      {# CLICKABLE. These used to be inert <div class="panel"> with no href, no
+         handler and no detail route behind them — the thing the researcher clicked and
+         nothing happened. They are open-access books with a PDF on disk, so the
+         click opens a detail panel with an Open-PDF button (rendered only when
+         the file is genuinely there). #}
+      <div class="panel k-card" tabindex="0" role="button"
+           aria-label="Open {{ (card.title or 'card') | striptags }}"
+           style="padding:var(--m-space-4) var(--m-space-5);position:relative;cursor:pointer;transition:border-color 140ms, transform 140ms;"
+           onmouseover="this.style.borderColor='var(--m-accent)';this.style.transform='translateY(-1px)';"
+           onmouseout="this.style.borderColor='';this.style.transform='';"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"
+           hx-get="/api/partial/knowledge/card/{{ card.id }}"
+           hx-target="#knowledge-cards-area"
+           hx-swap="innerHTML">
+        <div class="u-mb-3" style="display:flex;justify-content:space-between;align-items:baseline;">
+          <div class="u-label" style="letter-spacing:0.18em;">
+            {{ card.created_at[:7] if card.created_at else '—' }} · NOTE
+          </div>
+          {% if card.domain %}
+          <span class="u-label u-label--accent" style="display:inline-flex;align-items:center;padding:var(--m-space-1) var(--m-space-2);letter-spacing:0.12em;text-transform:uppercase;background:var(--m-accent-wash);border-radius:var(--m-radius-sm);">
+            {{ card.domain[:14] }}
+          </span>
+          {% endif %}
+        </div>
+        <div class="u-mb-2 u-title u-title--lg" style="font-weight:500;line-height:1.3;">
+          {{ card.title or 'Untitled' }}
+        </div>
+        {% if card.summary %}
+        <div class="ed" style="font-size:var(--t-small);color:var(--m-text);margin:0;">
+          {{ card.summary | striptags | replace('> ', '') | truncate(160, True, '…') }}
+        </div>
+        {% endif %}
+        <div class="u-mono" style="margin-top:var(--m-space-3);letter-spacing:0.12em;text-transform:uppercase;color:var(--m-muted);">
+          {% if card.status == 'read' %}✓ READ{% elif card.status == 'reading' %}◐ READING{% else %}OPEN ›{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      {{ empty_panel("No index cards yet", "The librarian can help you build your archive.") }}
+    {% endif %}
+  </div>
+</div>

@@ -1,0 +1,74 @@
+{#- focus_briefings.html — the briefing editions, read in place.
+
+    STYLED IN THE SOURCE'S OWN IDIOM: a serif headline over a short summary,
+    stories separated by a hairline, the outlet in small caps — using this app's
+    tokens, so it belongs to the page rather than importing a second design
+    system.
+
+    THE PICTURE AND THE DESCRIPTION COME FROM THE ARTICLE, not the e-mail. The
+    briefing carries neither: its blurb is Nature's own summary cut at a hard 420
+    characters, so every stored one ends mid-word, and there is no image field at
+    all. `tools/enrich_briefing_items.py` reads each article's `og:image` and
+    `og:description` — 47 pictures and 48 descriptions of the 53 items that carry
+    a link. Five publishers refuse a scripted request; those say so rather than
+    rendering an empty frame.
+
+    NO ARTICLE TEXT IS STORED. A briefing is a digest of other people's writing:
+    the description is the publisher's own one-sentence summary, offered for
+    reuse, and the headline links to the article. -#}
+<div class="brf">
+  {% for ed in briefings %}
+  <details class="brf-ed"{% if loop.first %} open{% endif %}>
+    <summary class="brf-ed-head">
+      <span class="brf-kind">{{ ed.kind_name }}</span>
+      <span class="brf-ed-title">{{ ed.title }}</span>
+      <span class="brf-ed-meta">{{ ed.published_at[:10] if ed.published_at }} · {{ ed.n_items }} stories</span>
+    </summary>
+
+    <div class="brf-items">
+      {% for it in ed["items"] %}
+      <article class="brf-item{% if it.image_url %} brf-item--pic{% endif %}">
+        {% if it.image_url %}
+        {#- A dead URL leaves nothing rather than a broken-image icon: these are
+            other publishers' servers and some go away. The tool HEAD-checks
+            each one before storing it, so this is the second line of defence. -#}
+        <a class="brf-thumb" href="{{ it.url or ed.url }}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">
+          <img src="{{ it.image_url }}" alt="" loading="lazy" decoding="async"
+               onerror="this.closest('.brf-thumb').remove()">
+        </a>
+        {% endif %}
+        <div class="brf-body">
+          <a class="brf-h" href="{{ it.url or ed.url }}" target="_blank" rel="noopener">{{ it.headline | sci }}</a>
+
+          {#- The publisher's own description first — a clean sentence written
+              for exactly this. The briefing blurb is the fallback, and it is
+              marked as cut because it always is. -#}
+          {% if it.description %}
+          <p class="brf-desc">{{ it.description | prose(300) }}</p>
+          {% elif it.blurb %}
+          <p class="brf-desc brf-desc--cut">{{ it.blurb | prose }}<span class="brf-cut">… continues at the source</span></p>
+          {% endif %}
+
+          <p class="brf-foot">
+            {% if it.source %}<span class="brf-src">{{ it.source }}</span>{% endif %}
+            {% if it.url %}<a class="brf-read" href="{{ it.url }}" target="_blank" rel="noopener">read the article →</a>{% endif %}
+            {% if it.enrich_note and not it.description %}
+            <span class="brf-note" title="Why this article has no picture or description here">{{ it.enrich_note }}</span>
+            {% endif %}
+          </p>
+        </div>
+      </article>
+      {% endfor %}
+      {% if not ed["items"] %}
+      <p class="brf-none">This edition's stories were not captured — only its headline was.</p>
+      {% endif %}
+    </div>
+
+    <a class="brf-orig" href="{{ ed.url }}" target="_blank" rel="noopener">the edition as Nature sent it →</a>
+  </details>
+  {% endfor %}
+
+  {% if not briefings %}
+  <p class="brf-none">No briefing editions stored yet. They arrive with the news scan.</p>
+  {% endif %}
+</div>

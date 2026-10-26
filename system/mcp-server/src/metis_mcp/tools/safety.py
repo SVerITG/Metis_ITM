@@ -1,0 +1,343 @@
+"""Data safety scanner for PII and sensitive content detection."""
+
+import logging
+import re
+
+from mcp.types import TextContent
+
+from metis_mcp.app_instance import app
+from metis_mcp.local_overrides import load_overrides
+
+# stderr logger — stdout belongs to the MCP stdio channel.
+log = logging.getLogger("metis.safety")
+
+# PII detection patterns
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+_PHONE_RE = re.compile(r"\+?\d{1,3}[\s.-]?\(?\d{1,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}")
+# International numbers written in small (e.g. 2-digit) groups — Belgian/French style
+# "+32 478 12 34 56", "+243 81 234 5678". A privacy guard errs toward flagging.
+_INTL_PHONE_RE = re.compile(r"\+\d{1,3}(?:[\s.\-/]?\d){7,}")
+# Patient / case identifier.
+#
+# The value was required to be `\d+`, so the identifier format actually used in
+# the field — an alphanumeric like "MAL-2024-00871" — could not match, and a line
+# naming a real patient record classified PUBLIC (audit 2026-09-14). The value is
+# now any identifier-shaped token, and a bare programme-style code is caught even
+# without its label, because that is how it is usually pasted.
+_PATIENT_ID_RE = re.compile(
+    r"\b(?:patient|case|dossier|record)[\s_]?(?:id|no|n°|#|number|num)?\s*[:=#]?\s*"
+    r"[A-Z]{0,6}[-/]?\d{2,}(?:[-/][A-Z0-9]{2,})*"
+    r"|\b[A-Z]{2,6}-\d{4}-\d{3,}\b", re.IGNORECASE
+)
+# ── GPS coordinates ──────────────────────────────────────────────────────────
+# In disease surveillance a coordinate pair IS an identifier: it locates a
+# patient's village, and at 3-4 decimals their household. The previous pattern
+# required ≥4 decimals on BOTH numbers with no cue word, so the single most
+# common way coordinates are actually written — "GPS -4.325, 15.322" — sailed
+# straight through the rail untouched.
+#
+# Three branches, each tuned to avoid firing on ordinary research prose
+# (p-values, percentages, version numbers, confidence intervals, DOIs):
+#   (a) a CUE word (gps/lat/lon/coords/village/household/…) followed by a pair
+#       → 2 decimals is enough, because the cue disambiguates.
+#   (b) NO cue → demand ≥4 decimals on both AND a comma/semicolon separator
+#       (household precision, ~11 m). The lookahead drops pairs where BOTH
+#       values are < 1 — those are probabilities/correlations/CI bounds
+#       ("sensitivity 0.9821, 0.9754"), never a field coordinate anyone records.
+#   (c) hemisphere-suffixed decimal or DMS: "4.325° S, 15.322° E".
+_GPS_COORD = r"[-+]?\d{1,3}\.\d{2,}"
+_GPS_CUE = (
+    r"(?:gps|coord(?:inate)?s?|lat(?:itude)?|lon(?:gitude)?|lng"
+    r"|position|location|geo|village|household)"
+)
+_GPS_RE = re.compile(
+    r"(?:"
+    # (a) cue word + pair (≥2 dp)
+    rf"\b{_GPS_CUE}\b[\s:=]*[\(\[]?\s*(?:lat(?:itude)?[\s:=]*)?{_GPS_COORD}\s*[,;/]?\s*"
+    rf"(?:lon(?:g(?:itude)?)?[\s:=]*)?{_GPS_COORD}"
+    r"|"
+    # (b) bare pair, ≥4 dp both, not two sub-1 values (those are stats, not places)
+    r"(?!0\.\d+\s*[,;]\s*0\.)"
+    r"[-+]?\d{1,3}\.\d{4,}\s*[,;]\s*[-+]?\d{1,3}\.\d{4,}"
+    r"|"
+    # (c) hemisphere-suffixed decimal degrees / DMS
+    r"\d{1,3}(?:\.\d+)?\s*°?\s*(?:\d{1,2}['′]\s*(?:\d{1,2}(?:\.\d+)?[\"″]\s*)?)?[NSns]\s*[,;/]?\s*"
+    r"\d{1,3}(?:\.\d+)?\s*°?\s*(?:\d{1,2}['′]\s*(?:\d{1,2}(?:\.\d+)?[\"″]\s*)?)?[EWew]\b"
+    r")",
+    re.IGNORECASE,
+)
+_BELGIAN_NID_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{2}-\d{3}\.\d{2}\b")
+# Date of birth (explicit label + date value)
+# Date of birth. The cue had to sit IMMEDIATELY before the date, so the ordinary
+# French phrasing — "né LE 12/03/1987", one intervening word — sailed through
+# (audit 2026-09-14). Up to three short words may now intervene.
+_DOB_RE = re.compile(
+    r"\b(?:dob|date[\s_]?of[\s_]?birth|born|n[eé][e]?|naissance|naît)\b"
+    r"(?:\s+\w{1,4}){0,3}\s*[:=]?\s*\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}",
+    re.IGNORECASE,
+)
+# Passport number (letter prefix + digits)
+_PASSPORT_RE = re.compile(
+    r"\b(?:passport|passeport)[\s_]?(?:no|n°|#|number|num)?\s*[:=]?\s*[A-Z]{1,2}\d{6,8}\b",
+    re.IGNORECASE,
+)
+# Medical record / dossier number
+_MRN_RE = re.compile(
+    r"\b(?:mrn|medical[\s_]?record(?:[\s_]?(?:no|#|number))?|dossier[\s_]?(?:no|#|médical|medical)?|numéro[\s_]?dossier)\s*[:=]?\s*[\dA-Z\-]{4,15}\b",
+    re.IGNORECASE,
+)
+# 16-digit national ID number (several national ID cards use a 16-digit format)
+_NID16_RE = re.compile(r"\b\d{16}\b")
+# ── Credentials / secrets ────────────────────────────────────────────────────
+# `scan_content` had NO credential patterns, so an AWS secret key pasted into a
+# request classified PUBLIC (audit 2026-09-14). The hook layer hard-denies
+# READING a credential store; this catches a secret that arrives as TEXT, which
+# is a different path and was unguarded.
+_CREDENTIAL_RE = re.compile(
+    r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"                       # AWS access key id
+    r"|\baws_secret_access_key\s*[:=]\s*\S{20,}"
+    r"|\bgh[pousr]_[A-Za-z0-9]{20,}\b"                      # GitHub token
+    r"|\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}\b"          # OpenAI / Anthropic
+    r"|\b(?:api[_\-]?key|secret|passwd|password|token)\s*[:=]\s*[^\s\"']{8,}"
+    r"|-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----",
+    re.IGNORECASE,
+)
+
+# A person NAMED alongside a clinical or demographic fact, with no field label.
+#
+# Every identity rule except GPS was label-anchored — it needed "nom:" or "DOB="
+# with a separator — which makes this a CSV detector and not a prose detector.
+# A realistic line list written as a sentence ("Maria Okafor, 34 ans, RDT+")
+# classified PUBLIC. This matches the shape that actually carries the risk: a
+# capitalised personal name sitting next to an age, a test result or a stage.
+_NAME_CONTEXT_RE = re.compile(
+    r"\b[A-Z][a-zà-ÿ]{2,}(?:[\s\-][A-Z][a-zà-ÿ]{2,})+\b"
+    r"[^.\n]{0,40}?"
+    r"(?:\b\d{1,3}\s*(?:ans|years?|yrs?|y/o)\b"
+    r"|\bCATT\b|\bmAECT\b|\bs[ée]ropositi|\bstage\s*[12]\b"
+    r"|\b(?:positi|n[ée]gati)(?:f|ve|ef)\b"
+    r"|\bponction\s+lombaire\b|\blumbar\s+puncture\b)",
+)
+
+# Name fields with associated identifier-type values
+_NAME_ID_RE = re.compile(
+    r"\b(?:nom|prenom|prénom|surname|firstname|first[\s_]name|last[\s_]name)\s*[:=]\s*[A-Za-zÀ-ÿ]{2,}",
+    re.IGNORECASE,
+)
+
+_SENSITIVE_COLUMNS = {
+    "patient", "patient_id", "case_id", "diagnosis", "dob",
+    "date_of_birth", "test_result", "gps_lat", "gps_lon",
+    # Name fields, record numbers, identity numbers
+    "nom", "prenom", "prénom", "surname", "firstname", "first_name", "last_name",
+    "mrn", "record_number", "dossier", "passport_number", "nid", "national_id",
+    # Generic identity and location columns of a line list
+    "name", "full_name", "patient_name", "gps", "latitude", "longitude",
+    "phone", "telephone", "mobile", "phone_number", "address",
+}
+# A header that names a person AND records a result or a location is a line
+# list: one identifiable person per row next to a clinical fact.
+_IDENTITY_COLUMNS = {"name", "full_name", "patient_name", "nom", "prenom", "prénom",
+                     "surname", "firstname", "first_name", "last_name", "dob",
+                     "date_of_birth", "phone", "telephone", "mobile", "phone_number"}
+_RESULT_HINTS = ("result", "positive", "confirm", "diagnos", "test", "gps",
+                 "latitude", "longitude", "case")
+# Merge any field-specific sensitive column names from the local override file.
+_SENSITIVE_COLUMNS |= {
+    str(c).lower() for c in load_overrides().get("extra_sensitive_columns", [])
+}
+
+
+def _build_extra_checks():
+    """Compile field-specific PII patterns from the local override file (if any).
+
+    Lets a user keep their own institution/programme identifiers (e.g. a national
+    case-registry number format) private and out of the public source, while still
+    being detected on their own machine.
+    """
+    checks: list[tuple[re.Pattern, str]] = []
+    sensitive: set[str] = set()
+    confidential: set[str] = set()
+    for item in load_overrides().get("extra_pii_patterns", []):
+        try:
+            flags = re.IGNORECASE if "i" in str(item.get("flags", "")).lower() else 0
+            rx = re.compile(item["regex"], flags)
+        except Exception as e:
+            # A PII check that fails to compile is a PII check that is simply OFF.
+            # Never swallow this: the user believes their institution's case-ID
+            # format is being detected, and it is not.
+            log.error(
+                "PII OVERRIDE PATTERN DISABLED — could not compile %r (label=%r): %s: %s. "
+                "This identifier will NOT be detected until the regex is fixed.",
+                item.get("regex"), item.get("label"), type(e).__name__, e,
+            )
+            continue
+        label = str(item.get("label", "Sensitive identifier"))
+        checks.append((rx, label))
+        level = str(item.get("level", "SENSITIVE")).upper()
+        if level == "CONFIDENTIAL":
+            confidential.add(label.lower())
+        else:
+            sensitive.add(label.lower())
+    return checks, sensitive, confidential
+
+
+_EXTRA_CHECKS, _EXTRA_SENSITIVE_LABELS, _EXTRA_CONFIDENTIAL_LABELS = _build_extra_checks()
+
+
+def _check_sensitive_headers(content: str) -> list[str]:
+    """Check first line of content for sensitive CSV/TSV column names."""
+    first_line = content.split("\n", 1)[0].lower()
+    # Check for CSV or TSV headers
+    separators = [",", "\t", ";", "|"]
+    for sep in separators:
+        if sep in first_line:
+            headers = {h.strip().strip('"').strip("'") for h in first_line.split(sep)}
+            found = headers & _SENSITIVE_COLUMNS
+            if found:
+                out = [f"Sensitive column(s) detected: {', '.join(sorted(found))}"]
+                if headers & _IDENTITY_COLUMNS and any(
+                        h for h in headers - _IDENTITY_COLUMNS
+                        if any(k in h for k in _RESULT_HINTS)):
+                    out.append("Line list: named individual per row with a "
+                               "clinical result or location")
+                return out
+    return []
+
+
+def _classify(warnings: list[str], file_path: str) -> str:
+    """Determine classification based on warnings and file type."""
+    warning_text = " ".join(warnings).lower()
+
+    # SENSITIVE: direct individual identifiers — patient/case IDs, individual GPS,
+    # diagnostic results, plus any field-specific identifiers from local overrides.
+    if any(kw in warning_text for kw in [
+        "patient", "case_id", "gps coordinate", "diagnostic", "test_result",
+        # A person named next to a clinical fact is individually identifying —
+        # it is the same data as a line-list row, written as a sentence.
+        "named individual",
+        # A secret in the request text is not "personal data", but it is the one
+        # other thing that must never be forwarded anywhere.
+        "credential",
+    ]) or any(lbl in warning_text for lbl in _EXTRA_SENSITIVE_LABELS):
+        return "SENSITIVE"
+
+    # CONFIDENTIAL: other PII — names, DOB, passport/record/identity numbers,
+    # files with sensitive columns.
+    if any(kw in warning_text for kw in [
+        "national id", "sensitive column",
+        "date of birth", "passport", "medical record", "name field",
+    ]) or any(lbl in warning_text for lbl in _EXTRA_CONFIDENTIAL_LABELS):
+        return "CONFIDENTIAL"
+
+    if file_path:
+        ext = file_path.lower().rsplit(".", 1)[-1] if "." in file_path else ""
+        if ext in ("xlsx", "xls", "csv") and warnings:
+            return "CONFIDENTIAL"
+
+    # If there are warnings but not sensitive/confidential
+    if warnings:
+        return "INTERNAL"
+
+    # Check file type for default classification
+    if file_path:
+        ext = file_path.lower().rsplit(".", 1)[-1] if "." in file_path else ""
+        if ext in ("py", "r", "js", "ts", "yaml", "yml", "json", "toml"):
+            return "INTERNAL"
+
+    return "PUBLIC"
+
+
+# Ordered (regex, label) PII checks applied to any text Metis is about to send out.
+# Single source of truth — used by both check_data_safety() and the pipeline's
+# Stage-3 Data Guardian (via scan_content), so the two can never drift apart.
+_PII_CHECKS: list[tuple[re.Pattern, str]] = [
+    (_EMAIL_RE, "Email address"),
+    (_PHONE_RE, "Phone number"),
+    (_INTL_PHONE_RE, "Phone number"),
+    (_PATIENT_ID_RE, "Patient/case ID pattern"),
+    (_GPS_RE, "High-precision GPS coordinate"),
+    (_BELGIAN_NID_RE, "Belgian national ID"),
+    (_DOB_RE, "Date of birth"),
+    (_PASSPORT_RE, "Passport number"),
+    (_MRN_RE, "Medical record number"),
+    (_NID16_RE, "16-digit national ID number"),
+    (_NAME_ID_RE, "Name field"),
+    (_NAME_CONTEXT_RE, "Named individual with clinical/demographic detail"),
+    (_CREDENTIAL_RE, "Credential or secret"),
+]
+# Append any field-specific patterns kept in the local (gitignored) override file.
+_PII_CHECKS.extend(_EXTRA_CHECKS)
+
+
+def scan_content(content: str, file_path: str = "") -> dict:
+    """Scan text for PII patterns + sensitive CSV/TSV headers and classify it.
+
+    The one scanner both the check_data_safety tool and the pipeline Data Guardian
+    call. Returns {safe, classification, warnings}.
+
+    Args:
+        content: Text content to scan.
+        file_path: Optional file path for context-based classification.
+    """
+    # Several patterns can share a label (two phone formats); report the label
+    # once, with the larger count, rather than the same warning twice.
+    counts: dict[str, int] = {}
+    for pattern, label in _PII_CHECKS:
+        hits = pattern.findall(content)
+        if hits:
+            counts[label] = max(counts.get(label, 0), len(hits))
+    warnings: list[str] = [f"{label}(s) detected: {n} found" for label, n in counts.items()]
+    warnings.extend(_check_sensitive_headers(content))
+    classification = _classify(warnings, file_path)
+    return {"safe": len(warnings) == 0, "classification": classification, "warnings": warnings}
+
+
+@app.tool()
+async def check_data_safety(
+    content: str,
+    file_path: str = "",
+) -> list[TextContent]:
+    """Check pasted or shared data for personal identifiers — call FIRST, before analysing it.
+
+    Call this as the very first step whenever the researcher pastes or shares
+    rows about individual people (a line list, patient or participant records,
+    a table with names, dates of birth, phone numbers, GPS points or IDs) —
+    before any calculation or answer, even for a simple question. If the result
+    is not PUBLIC, do not analyse the raw rows: mask them with anonymize_text,
+    log the event with log_consent_event, and offer a script the researcher
+    runs locally.
+
+    Returns safety status, classification, specific warnings and the next steps.
+
+    Args:
+        content: Text content to scan.
+        file_path: Optional file path for context-based classification.
+    """
+    result = scan_content(content, file_path)
+    safe = result["safe"]
+    classification = result["classification"]
+    warnings = result["warnings"]
+
+    lines = [
+        f"**Safe:** {safe}",
+        f"**Classification:** {classification}",
+    ]
+    if warnings:
+        lines.append("**Warnings:**")
+        for w in warnings:
+            lines.append(f"- {w}")
+    else:
+        lines.append("No PII or sensitive patterns detected.")
+    if classification in ("SENSITIVE", "CONFIDENTIAL"):
+        lines += [
+            "",
+            "**Next — before answering the question:** do not analyse these rows. "
+            "Tell the researcher which identifiers were found; show a masked copy "
+            "(anonymize_text with replace_names=True — the masked table only, not "
+            "the replacement map); log it (log_consent_event); and offer a script "
+            "they run on their own computer against the real file. The pasted rows "
+            "have already reached the model — say so, do not claim otherwise.",
+        ]
+
+    return [TextContent(type="text", text="\n".join(lines))]

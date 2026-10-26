@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% from "partials/_section.html" import sec_label %}
+{% block title %}Learning{% endblock %}
+
+{% block content %}
+<div class="page">
+
+  <div class="page-head">
+    <div>
+      <div class="page-eyebrow">SURFACE 07 · WHAT YOU'RE LEARNING</div>
+      <h1 class="page-title">Learning</h1>
+    </div>
+    <div class="page-meta" hx-get="/api/partial/learning/meta" hx-trigger="load" hx-swap="innerHTML">— COURSES · — DUE TODAY</div>
+  </div>
+
+  <!-- Velocity strip -->
+  {{ sec_label("How fast you're moving", tail="PACE · STREAK · WINDOWS") }}
+  <div class="u-mb-6"
+       hx-get="/api/partial/learning/velocity"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="panel panel-pad skeleton panel--md">
+      <p class="u-ed" style="font-size:var(--t-small);margin:0;">Measuring your pace this week…</p>
+    </div>
+  </div>
+
+  <!-- Spaced repetition panel + Streak panel -->
+  <div class="grid grid-3 u-mb-6">
+
+    <!-- Spaced repetition (spans 2 cols) — wrapped so the "build deck" button
+         inside the partial can refresh it in place after seeding. -->
+    <div id="sr-due-wrap" style="grid-column:1/3;">
+    {#- innerHTML, not outerHTML: this element carries the layout/styling classes and the partial returns bare content, so an outerHTML swap deleted the wrapper and the panel silently lost its border, padding or grid on load. See tools/check_htmx_swaps.py. -#}
+    <div class="panel panel-pad" style="padding:var(--m-space-6) var(--m-space-6);"
+         hx-get="/api/partial/learning/due-today"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div class="kicker kicker--accent">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="4" width="12" height="9"/><line x1="2" y1="7" x2="14" y2="7"/>
+        </svg>
+        <span>SPACED REPETITION · ONE MOMENT…</span>
+      </div>
+      <h2 style="font-family:var(--m-display);font-size:var(--t-h2);font-weight:500;letter-spacing:-0.015em;margin:var(--m-space-3) 0 var(--m-space-2);color:var(--m-ink);">Looking up what's due today…</h2>
+      <div class="skeleton u-mb-4" style="height:52px;border-radius:var(--m-radius-sm);"></div>
+      <div class="tnum u-label">NEW · — &nbsp;&nbsp; LEARNING · — &nbsp;&nbsp; REVIEW · —</div>
+    </div>
+    </div><!-- /#sr-due-wrap -->
+
+    <!-- Streak panel -->
+    <div class="panel panel-pad" style="padding:var(--m-space-5) var(--m-space-5);">
+      <div class="kicker">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="8" cy="8" r="5.5"/><polyline points="8 4.5 8 8 10.5 9.5"/>
+        </svg>
+        <span>STREAK</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:var(--m-space-1);margin:var(--m-space-4) 0 var(--m-space-3);">
+        {% for c in streak_cells %}
+        <div title="{{ c.date }}{% if c.active %} · reviewed{% endif %}"
+             style="aspect-ratio:1/1;border-radius:1px;
+                    background:{% if c.active %}var(--m-accent){% else %}var(--m-surface-3){% endif %};
+                    {% if c.is_today %}outline:1.5px solid var(--m-ochre);outline-offset:1px;{% endif %}"></div>
+        {% endfor %}
+      </div>
+      <div class="u-ed" style="font-size:var(--t-small);">
+        {#- "No reviews yet" was FALSE while 234 cards were overdue. It meant
+            "you have not reviewed yet"; it read as "there is nothing here".
+            An empty state is read by someone wondering whether the thing is
+            broken, so it has to describe the real situation. -#}
+        {% if streak_has_data %}Keep the habit. <em>Don't gamify it.</em>
+        {%- elif streak_waiting %}
+          <strong>{{ streak_waiting }} cards are waiting.</strong>
+          Ten a day clears them in {{ (streak_waiting / 10) | round(0, 'ceil') | int }} days —
+          this strip fills in as you go.
+        {%- else %}Nothing due. This strip fills in as you review.{% endif %}
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Courses grid -->
+  <h2 class="sec-label u-mb-4">
+    <span>Courses</span>
+    <span class="tail">
+      <a href="/course/statistics" target="_blank" rel="noopener"
+         class="btn btn--ghost btn--caps" style="font-size:var(--t-micro);">
+        Statistics to Multilevel Models ↗
+      </a>
+      <span hx-get="/api/partial/learning/meta" hx-trigger="load" hx-swap="innerHTML">—</span>
+    </span>
+  </h2>
+  {#- innerHTML, not outerHTML: this element carries the layout/styling classes and the partial returns bare content, so an outerHTML swap deleted the wrapper and the panel silently lost its border, padding or grid on load. See tools/check_htmx_swaps.py. -#}
+  {#- `grid--top` (added 2026-09-02): CSS Grid stretches every card to the
+      tallest in its row, so a course with a short next-step was padded out to
+      match one carrying a three-line description — visibly ~150px of blank
+      space the card owned. The opt-in class for exactly this already existed in
+      styles.css and this grid had never used it. -#}
+  {#- The id is what Resume swaps into. Without it the button's hx-target
+      matches nothing and the click is silently inert — the worst failure an
+      HTMX control has, because it looks exactly like a working one. -#}
+  <div class="grid grid-3 grid--top" id="courses-archive"
+       hx-get="/api/partial/learning/courses-archive"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    {% for _ in range(3) %}
+    <div class="panel panel-pad skeleton" style="padding:var(--m-space-5) var(--m-space-5);">
+      <div class="u-mb-2" style="height:9px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);width:40%;"></div>
+      <div class="u-mb-1" style="height:16px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);"></div>
+      <div class="u-mb-4" style="height:12px;background:var(--m-surface-3);border-radius:var(--m-radius-sm);width:60%;"></div>
+      <div style="height:2px;background:var(--m-surface-3);border-radius:1px;"></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Course reader (hidden until a course is opened) -->
+  <div class="u-hide" id="course-reader-panel"
+       style="margin-top:var(--m-space-6);grid-template-columns:260px 1fr;border:1px solid var(--m-line);border-radius:6px;overflow:hidden;min-height:600px;background:var(--m-surface-1);">
+    <!-- Left: module/lesson list -->
+    <div id="course-overview-panel"
+         style="border-right:1px solid var(--m-line);overflow-y:auto;max-height:700px;">
+      <div style="padding:var(--m-space-7) var(--m-space-5);color:var(--m-muted);font-size:var(--t-small);">Opening the course…</div>
+    </div>
+    <!-- Right: lesson content -->
+    <div id="lesson-reader-panel"
+         style="overflow-y:auto;max-height:700px;">
+      <div style="padding:var(--m-space-7) var(--m-space-6);color:var(--m-muted);font-size:var(--t-body);">
+        Select a lesson from the left to begin.
+      </div>
+    </div>
+  </div>
+
+  <!-- Course ideas -->
+  <h2 class="sec-label u-mb-4" style="margin-top:var(--m-space-6);">
+    <span>Course Ideas</span>
+    <span class="tail">
+      <button class="btn btn--ghost btn--caps" style="font-size:var(--t-micro);"
+              onclick="openCourseWizard('', '')">+ New Course</button>
+      CUSTOMISE YOUR CATALOG
+    </span>
+  </h2>
+  <div hx-get="/api/partial/learning/placeholder-courses"
+       hx-trigger="load"
+       hx-swap="outerHTML">
+    <div class="panel skeleton" style="min-height:100px;"></div>
+  </div>
+
+  {% include "partials/learning_course_wizard.html" %}
+
+</div>
+{% endblock %}

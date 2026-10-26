@@ -1,0 +1,51 @@
+{% if meeting %}
+<div class="panel u-mb-4" style="padding:var(--m-space-6) var(--m-space-6);">
+  <div class="kicker kicker--ochre">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="8" r="5.5"/><polyline points="8 4.5 8 8 10.5 9.5"/>
+    </svg>
+    <span>{{ meeting.date[:10] if meeting.date else '—' }} · {{ meeting.participants or 'PARTICIPANTS' }}</span>
+  </div>
+  <h2 style="font-family:var(--m-display);font-size:var(--t-h2);font-weight:500;letter-spacing:-0.018em;margin:var(--m-space-3) 0 var(--m-space-3);color:var(--m-ink);">
+    {{ meeting.title or 'Upcoming meeting' }}
+  </h2>
+  {% if meeting.notes %}
+  <div class="ed u-mb-4" style="font-size:var(--t-body);max-width:640px;">{{ meeting.notes }}</div>
+  {% else %}
+  <p class="ed u-mb-4" style="font-size:var(--t-body);max-width:640px;color:var(--m-muted);">
+    <em>No briefing notes yet. Ask Metis to prepare you for the meeting.</em>
+  </p>
+  {% endif %}
+  <div style="display:flex;gap:var(--m-space-2);margin-top:var(--m-space-5);padding-top:18px;border-top:1px solid var(--m-rule);">
+    <button class="btn btn--primary" onclick="launchPrompt('meeting')">Open briefing</button>
+    <button class="btn btn--sec btn--caps" onclick="openTranscript('{{ meeting.id or '' }}')">Transcript (after)</button>
+    <button class="btn btn--ghost btn--caps" onclick="rescheduleMeeting('{{ meeting.id or '' }}')">Reschedule</button>
+  </div>
+</div>
+{% else %}
+<div class="panel u-mb-4" style="padding:var(--m-space-6) var(--m-space-6);">
+  <div class="kicker">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="8" r="5.5"/><polyline points="8 4.5 8 8 10.5 9.5"/>
+    </svg>
+    <span>NO UPCOMING MEETINGS</span>
+  </div>
+  {#- The three parts an empty state owes the reader: what this is for, what
+      you actually HAVE, and one thing to do. "The week is clear. Protect it."
+      was charming and told him nothing — he cannot tell from it whether the
+      surface is empty because there are no meetings or because the import
+      never ran. The count settles that. -#}
+  <h2 class="me-title">The week is clear.</h2>
+  <p class="me-body">
+    {% if total %}{{ total }} meeting{{ '' if total == 1 else 's' }} recorded{% if last_date %},
+    the last on {{ last_date }}{% endif %}.
+    {% else %}Nothing has been recorded here yet.{% endif %}
+    Notes you import are read for decisions and follow-ups, and linked to the
+    projects they touch.
+  </p>
+  <p class="me-acts">
+    <button type="button" class="btn btn--soft btn--sm"
+            onclick="document.getElementById('meeting-import-open')?.click()">Import notes</button>
+  </p>
+</div>
+{% endif %}

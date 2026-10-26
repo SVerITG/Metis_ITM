@@ -1,0 +1,481 @@
+{% extends "base.html" %}
+{% from "partials/_section.html" import sec_label %}
+{% from "partials/_section.html" import section, skeleton_block, skeleton_box %}
+{% from "partials/_section.html" import zone %}
+{% block title %}Today{% endblock %}
+
+{% block content %}
+<div class="page">
+
+  <!-- ===== 1. Page header ===== -->
+  <div class="page-head">
+    <div>
+      <div class="page-eyebrow" id="today-eyebrow"></div>
+      <h1 class="page-title" id="today-title">Good morning.</h1>
+    </div>
+    <div class="page-meta" id="today-meta" style="white-space:pre-line;">—</div>
+  </div>
+  <script>
+  (function() {
+    const now = new Date();
+    const hour = now.getHours();
+    const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const dayName = days[now.getDay()];
+    const month = months[now.getMonth()];
+    const dateNum = now.getDate();
+    const year = now.getFullYear();
+    const weekNum = Math.ceil((((now - new Date(year, 0, 1)) / 86400000) + new Date(year, 0, 1).getDay() + 1) / 7);
+    document.getElementById('today-eyebrow').textContent =
+      dayName.toUpperCase() + ' · ' + month.toUpperCase() + ' ' + dateNum + ', ' + year + ' · WEEK ' + weekNum;
+    document.getElementById('today-title').textContent = greet + ', ' + (window.METIS_USER_NAME || 'Researcher') + '.';
+    const hh = String(hour).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    document.getElementById('today-meta').textContent = hh + ':' + mm;
+  })();
+  </script>
+
+  {# ── ORDER: you first, then the world, then the archive.
+       Reordered 2026-08-26. The page was laid out oldest-feature-first, which put
+       Today's focus SIXTH — behind the brief, the resume card, three board boxes
+       and the literature list. On a surface you open to decide what to do, the
+       answer to "what am I doing" should not be below the fold.
+
+         1  find              — the fastest route to a thing you can name
+         2  morning brief     — what happened; collapses itself once read
+         2b resume card       — where we left off
+         3  today's focus     — what to do now            (was 6th)
+         4  connections       — what it links to          (was 7th)
+         5  boards            — outbreaks · events · funding
+         6  literature        — new papers in your field
+         7  learning nudge
+         8  what Metis knows  — one closed fold, fetched only if opened
+         9  dispatch: news
+        10  system health
+
+       The brief keeps the top slot despite being "the world" rather than "you":
+       it is the morning ritual, and since the read-state fix it folds to a single
+       line once read, so on any second visit the actionable panels rise anyway.
+
+       Load stagger follows the visual order — if it does not, the page fills out
+       of sequence and jumps as each skeleton resolves. Panels inside the closed
+       fold use `intersect once` and are never fetched at all unless opened. -#}
+
+  {#- ===== 1b. Find — now a dialog, not a box on the page ==================
+       The Today surface had its own search field here, and the top bar had
+       another one 150px above it. They called DIFFERENT endpoints, so the same
+       question returned different answers depending on which box you happened
+       to type into.
+
+       Asked for 2026-09-02: one search BUTTON that opens a dialog. It lives in
+       the top bar (`.t-searchbtn` in base.html), opens on "/" from anywhere,
+       and calls `unified-search` — the better of the two, which fans out across
+       the library silos and episodic memory. Removing the field from here also
+       gives Today its first screenful back to the brief and the day's work,
+       which is what this surface is for. ==================================== -#}
+
+    {#- ══════════════════════════════════════════════════════════════════════
+      TODAY IS ORDERED BY THE QUESTIONS YOU ASK AT NINE IN THE MORNING.
+
+      It used to run in the order the panels were built: a ~900-word brief, then
+      last night's session, then the focus cards, then connections, then three
+      boards, then six more. Reported 2026-08-29: "We want the focus surface really
+      to be an overview that you can click through in the morning, setting up
+      your day and being informed."
+
+      So the sequence is now:
+        1  what happened overnight        the brief
+        2  what needs me today            due + starred, merged from Work
+        3  what should I read             only when something is flagged crucial
+        4  what changed in my field       news · new papers · boards
+        5  what connects to what          cross-pollination
+        6  where was I                    LAST SESSION, MOVED DOWN — it answers
+                                          yesterday's question, not today's
+        7  everything else                folded
+
+      Short panels are paired with `.today-pair` rather than each taking a full
+      row of a very wide screen. See the note on that class in styles.css.
+      ══════════════════════════════════════════════════════════════════════ -#}
+
+  <!-- ===== 2. Morning brief — full-width hero ===== -->
+  <div hx-get="/api/partial/today/morning-brief"
+       hx-trigger="load"
+       hx-swap="outerHTML">
+    <div class="panel u-mb-6 panel--lg">
+      <div class="skeleton skeleton-bar w-30 u-mb-4"></div>
+      <div class="skeleton skeleton-bar w-100 u-mb-2" style="height:14px;"></div>
+      <div class="skeleton skeleton-bar w-100 u-mb-2" style="height:14px;"></div>
+      <div class="skeleton skeleton-bar w-70"  style="height:14px;"></div>
+    </div>
+  </div>
+
+  {#- ══ ONE SECTION: WHAT NEEDS YOU TODAY ═══════════════════════════════
+      Reported 2026-08-31: "some sections are merged, visible."
+
+      These were two panels under two headings, and they OVERLAPPED — the focus
+      cards drew from a deadline pool while the strip beneath showed the same
+      dated tasks, so one overdue task appeared twice on one screen. Merging
+      two panels that duplicate each other is the whole point; leaving them
+      adjacent under separate titles was the version of the merge that only
+      moved things closer together.
+
+      The division is now clean and legible:
+        · anything with a DATE   → the due strip (top, it is the commitment)
+        · anything you STARRED   → the cards (below, it is the choice)
+      One heading over both, and both render `bare` so neither brings its own.
+      ═══════════════════════════════════════════════════════════════════════ -#}
+    {#- ═══════════════════════════════════════════════════════════════════════
+        WORKSTATION — everything that is your work, in one box.
+
+        Asked for 2026-09-13: "group everything which is work to a box called
+        Workstation ... split vertically in boxes and make content coherent".
+
+        The three columns are the three questions a working morning asks, in the
+        order it asks them: what did I commit to, what was I in the middle of,
+        and what did I set aside to read. They were previously scattered down the
+        page with the boards and the news feed between them, so the answer to the
+        second question sat two screens below the first.
+
+        This supersedes the 2026-09-11 placement of the reading stack below "In
+        your field". It was right that a pile belongs downstream of the stream
+        that fills it; it is more right that everything you work FROM sits
+        together. The stack keeps its own ochre meaning inside the box.
+
+        IT NOW OPENS SHUT (2026-09-14): "when the today surface opens the
+        workstation needs to be collapsed, when you want to work you open it and
+        all three boxes open as well". It was `collapsible=False` — a deliberate
+        choice that this is the surface rather than a fold — and the cost of that
+        was three full columns of work standing between the morning brief and
+        everything downstream of it, every day, before you had decided to work.
+
+        Folding is only honest if it hides the DETAIL and not the FACT, so the
+        summary line carries the three counts (see today_workstation_tail.html)
+        and the fold state is remembered per machine by the zone macro. Opening
+        the zone opens all three columns together — one decision, not four.
+
+        `kind="work"` still paints the olive bar that says whose work this is.
+        ═══════════════════════════════════════════════════════════════════════ -#}
+    {% call zone("Workstation", key="today-workstation", kind="work",
+                 collapsible=True, open=False,
+                 tail_html='<span hx-get="/api/partial/today/workstation-tail"'
+                           ' hx-trigger="load, metis:today-changed from:body"'
+                           ' hx-swap="innerHTML"></span>') %}
+    <div class="ws-cols">
+
+      {#- ONE LINK TO WORK PER COLUMN, AND IT LIVES IN THE HEADER (2026-09-14).
+          This column carried THREE routes to the same surface — one under the add
+          form, one inside the plan panel's own header, one in the counts row —
+          because three partials each brought their own. A repeated link is not
+          three affordances, it is one affordance you stop trusting. It is now a
+          header slot every column fills the same way. -#}
+      <div class="ws-col" data-ws-col="today">
+        <div class="ws-col-h">
+          <span>What needs you today</span>
+          <a class="ws-col-link" href="/work" hx-get="/api/tab/work"
+             hx-target="#tab-content" hx-push-url="/work">Work &rarr;</a>
+        </div>
+        <div class="ws-col-b">
+  {#- ONE MOUNT, ONE OWNER (2026-09-15). This column used to stack four things —
+      an add form, the plan strip, the due-today strip and the focus panel — each
+      fetching itself, each drawing its own row shape, and none of them aware of
+      the others. That is why it said "nothing" twice, why a starred item and a
+      pinned item looked nothing alike, and why the add button had no target to
+      swap into on a day when nothing was due.
+
+      It is now a single partial that merges the three sources, dedupes them, and
+      draws one row for each. Everything that acts on a row returns this same
+      fragment, so the column can never again disagree with itself. -#}
+  <div id="ws-needs-mount"
+       hx-get="/api/partial/today/needs-you"
+       hx-trigger="load, metis:today-changed from:body"
+       hx-swap="innerHTML"></div>
+        </div>
+      </div>
+
+      <div class="ws-col" data-ws-col="left-off">
+        {#- NO header link here. Two columns pointing at /work is the complaint
+            this change exists to fix, and this one would be the weaker of the
+            two: every row in this column is already a link to its own project,
+            so a header link goes to the same surface with less precision. -#}
+        <div class="ws-col-h"><span>Where you left off</span></div>
+        <div class="ws-col-b">
+    {#- WHERE YOU LEFT OFF, folded, INSIDE this section — because it is not a
+        record of yesterday, it is the shortest route to deciding today. Every
+        row carries a button that pins that project's next task straight into
+        the focus cards above. -#}
+    <div hx-get="/api/partial/today/pick-focus?bare=1"
+         hx-trigger="load delay:140ms"
+         hx-swap="innerHTML"></div>
+        </div>
+      </div>
+
+      <div class="ws-col" data-ws-col="reading">
+        <div class="ws-col-h">
+          <span>Reading stack</span>
+          <a class="ws-col-link" href="/knowledge#reading">Library &rarr;</a>
+        </div>
+        <div class="ws-col-b">
+  {#- YOUR READING STACK sits BELOW "In your field", asked for 2026-09-11. The
+      order is now the order of the question: what arrived (in your field), then
+      what you set aside to read. A pile you chose is downstream of the stream it
+      came from — putting it above meant the stack appeared before the source that
+      fills it.
+
+      Drawn as a stack rather than a list, and it renders nothing at all when
+      nothing is waiting. Crucial floats to the top; it is no longer the price of
+      appearing. Clicking the pile opens the full queue in Library rather than
+      rebuilding it here. -#}
+  <div hx-get="/api/partial/today/reading?bare=1"
+       hx-trigger="load delay:240ms"
+       hx-swap="outerHTML"></div>
+        </div>
+      </div>
+
+    </div><!-- /.ws-cols -->
+
+    {#- THE BACKLOG SITS UNDER ALL THREE COLUMNS (2026-09-14). These counts were
+        rendered by the focus panel, so they appeared at the foot of "What needs
+        you today" — as if 68 open tasks, the blocked ones, the ideas and the
+        flashcards all belonged to that one box. They are what is waiting behind
+        the whole Workstation, so they run its full width, underneath. -#}
+    <div hx-get="/api/partial/today/also-waiting"
+         hx-trigger="load delay:260ms, metis:today-changed from:body"
+         hx-swap="innerHTML"></div>
+    {% endcall %}
+  {#- OUTBREAKS · EVENTS · FUNDING, directly under "Where you left off".
+      Moved 2026-09-05, and CLOSED while moving: the strip opened a
+      three-column grid and never emitted its `</div>`, so the Learning box
+      and the recall card were its fourth and fifth grid children. They had
+      been rendering at a third of the page width, in a second grid row,
+      with an empty column beside them. The imbalance did not show up in a
+      div count because a later `</div>` closed it by accident. -#}
+  <!-- ===== 5. Board strip — Outbreaks · Events · Funding ===== -->
+  <div class="board-strip u-mb-6">
+    <div hx-get="/api/partial/today/board/outbreaks"
+         hx-trigger="load delay:200ms"
+         hx-swap="outerHTML">
+      <div class="board-box" style="min-height:180px;">
+        <div class="board-box-head"><div class="skeleton skeleton-bar w-30"></div></div>
+      </div>
+    </div>
+    <div hx-get="/api/partial/today/board/events"
+         hx-trigger="load delay:200ms"
+         hx-swap="outerHTML">
+      <div class="board-box" style="min-height:180px;">
+        <div class="board-box-head"><div class="skeleton skeleton-bar w-30"></div></div>
+      </div>
+    </div>
+    <div hx-get="/api/partial/today/board/funding"
+         hx-trigger="load delay:200ms"
+         hx-swap="outerHTML">
+      <div class="board-box" style="min-height:180px;">
+        <div class="board-box-head"><div class="skeleton skeleton-bar w-30"></div></div>
+      </div>
+    </div>
+  </div>
+
+
+  {#- WHAT CHANGED, in one glance, both sources side by side. This replaces a
+      pair that showed "new literature" beside a learning nudge — two unrelated
+      things next to each other because they happened to be short. News and
+      Library are the same question asked of two sources, which is what makes
+      them worth comparing. -#}
+  {#- innerHTML: the partial returns an <h2> and a grid, not a single wrapper,
+      so an outerHTML swap would replace this div with the heading and drop the
+      rest of the structure. Caught by tools/check_htmx_swaps.py within a minute
+      of writing it — twice, in the same batch. -#}
+  <div class="u-mb-6">
+    {#- ONE BOX, replacing three. "What changed in your field yesterday" and
+        "New in your field" were news and papers with labels that did not say
+        so; "Publication scan" was the same table as the second, at fourteen
+        times the markup. Asked for 2026-09-04. -#}
+    <div hx-get="/api/partial/today/field-week"
+         hx-trigger="load delay:220ms"
+         hx-swap="outerHTML">
+      <div class="panel panel--md"><div class="skeleton skeleton-bar w-30 u-mb-4"></div>
+        <div class="skeleton skeleton-bar w-100 u-mb-2" style="height:14px;"></div></div>
+    </div>
+  </div>
+
+
+  {#- NOT PAIRED (changed 2026-09-02). These two were side by side in a
+      `.today-pair`, which pairs panels of SIMILAR height — and these are a
+      five-paper list with a control rail on each row, next to a single small
+      course card. `.today-pair` sets `align-items: start`, correctly, so the
+      right column simply stopped about a thousand pixels above the left one
+      and Today carried a dead half-column down the middle of the page.
+
+      Full width each instead. The paper list gains the room it actually needed
+      (its header ran "PUBLICATION SCAN · NOTHING NEW IN THE LAST HOUR · 62 IN
+      ALL · WEEK · UPDATE" across half a column), and the course card reads
+      fine as a slim band — the morning brief above it is full width too.
+
+      The pairing that DOES work is kept: the two glance windows in `whats-new`
+      above are the same shape and the same three lines, which is what makes
+      the eye compare them. -#}
+  {#- Spacing on an OUTER wrapper, not on the swap target. `hx-swap="outerHTML"`
+      replaces the element it is on, so a `u-mb-6` written there is discarded
+      with it the moment the partial arrives — caught by
+      tools/check_htmx_swaps.py within a minute of my writing it, which is the
+      third time that tool has paid for itself. -#}
+  
+
+  {#- ═══════════════════════════════════════════════════════════════════════
+      LEARNING STATION — everything that is study, in one box.
+
+      Asked for 2026-09-14: "Like there is a working station there should be a
+      consolidated learning box on the today surface." What stood here was two
+      unrelated full-width panels stacked — the course slots, then recall —
+      with nothing saying they were the same subject, and a third fact missing
+      entirely.
+
+      The three columns are NOT a copy of the Workstation's three. That box
+      answers the three questions a morning asks about work; this one answers
+      the three it asks about study, and they are different questions:
+
+        Continue        what am I in the middle of
+        Recall          what should I see again
+        Not yet begun   what did I say I would learn
+
+      The third is the honest addition. Nine courses had been recorded and never
+      opened, reachable only by scrolling past the ones in progress on another
+      surface. A promise you cannot see is a promise you will not keep.
+
+      `kind="learning"` paints the green bar, reusing a token the palette already
+      defines in all six themes rather than inventing a sixth colour to learn.
+      A course drags from here into "What needs you today" above.
+      ═══════════════════════════════════════════════════════════════════════ -#}
+  {#- THE COURSES ACROSS THE TOP, RECALL UNDERNEATH (2026-09-15).
+      It was three columns side by side — Continue | Recall | Not yet begun — so
+      the three course slots were squeezed into a third of the width and stacked
+      vertically inside it, which is the opposite of what three slots are for.
+
+      Asked for: the three courses on top, the ones I choose, with recall below
+      them. "Not yet begun" is gone with the same instruction: nine courses that
+      were never opened are not today's study, and the slot picker is where a new
+      course gets chosen. They are still on the Learning surface.
+
+      The picker already existed — each slot has a course dropdown — but it was
+      behind a "⋯" menu, which is why it read as though there were no choice. -#}
+  {% call zone("Learning station", key="today-learning-station", kind="learning",
+               tail="YOUR STUDY · PICK A COURSE PER BOX", collapsible=False) %}
+
+  <div hx-get="/api/partial/today/learning"
+       hx-trigger="load delay:300ms"
+       hx-swap="outerHTML"></div>
+
+  {#- RECALL, under the courses rather than beside them: it is the same subject
+      from the other end — above is what to read next, this is what was read. -#}
+  {#- No heading here: the review partial renders its own "Recall". Adding one
+      outside it printed the word twice — the same defect corrected in the
+      Workstation columns on 2026-09-14. -#}
+  <div class="ws-recall">
+    <div class="ws-col-b">
+      <div hx-get="/api/partial/today/review"
+           hx-trigger="load delay:360ms"
+           hx-swap="outerHTML"></div>
+    </div>
+  </div>
+  {% endcall %}
+
+
+  {#- CROSS-POLLINATION MOVED TO REFLECTION. Reported 2026-08-31: "'Connects to'
+      can be put in reflection or another surface but not on the today surface
+      because now it is not clear what it is supposed to be or what it relates
+      to."
+
+      Naming its seed project was not enough. On Today it sits among things that
+      each answer a question you are asking at nine in the morning — what needs
+      me, what should I read, what changed — and "here are five things that
+      resemble a project you touched" is not one of those. It is a thinking
+      tool, and Reflection is where thinking happens.
+
+      The endpoint is unchanged and still mounted there. -#}
+
+  {#- The resume card lived here as an open paragraph describing yesterday,
+      which you could read and do nothing with. It is now folded INTO "what
+      needs you today" as partials/today_pick_focus.html, where each row can
+      become today's focus with one press. Same information, one screen higher,
+      and actionable. -#}
+
+
+  <!-- ===== 8. What Metis knows — ONE zone, closed by default ==============
+       Audit 2026-08-25: research threads (830 visible words — a third of the
+       whole surface), memory pulse, brief bridges and the memory landscape were
+       four panels answering one question in four visual languages. They are now
+       one fold. Closed by default; the header line carries the fact, the body
+       carries the detail.
+
+       `hx-trigger="intersect once"` rather than `load`: a panel nobody opens
+       should not be fetched at all. Four requests on every page load, for
+       content behind a closed fold, is work done for no reader. ================ -->
+  {% call zone("What Metis knows", key="today-memory",
+               tail="recent projects · what is remembered") %}
+    {#- THE UPPER BOX now follows projects rather than topic threads, and the
+        MIDDLE one is gone. Asked for 2026-09-05: "keep the bottom box for sure
+        and delete the middle one and the upper one should be following the
+        latest three projects I have worked on but take a lot less space".
+
+        The memory pulse that stood in the middle counted memory writes per day
+        as a sparkline — a measure of how busy the bookkeeping was, which is not
+        a thing to decide anything by. The two boxes that remain both answer
+        "what does this system hold for me": one by project, one by kind. -#}
+    {#- The plan strip used to be mounted here, because it replaced "Lately you
+        worked on" in place — and that put a PLANNING CONTROL inside the closed
+        "What Metis knows" fold. Reported 2026-09-08: "why is work planning moved
+        to What Metis Knows??? this should be in 'What needs you today'". It now
+        lives in that section, directly under the quick-add. The old panel
+        belonged in this fold because it was a readout; a control does not. -#}
+
+    {#- WHAT METIS KNOWS — one row per KIND of memory, and the strip is the link.
+      Replaced the memory landscape (twenty topics as sized bubbles, 30 KB) on
+      2026-09-04: "must be much smaller: a visualization of how many memories
+      there are in each kind of memory, when clicked you will go to the more
+      exhaustive memory page in the system". -#}
+  <div hx-get="/api/partial/today/knows"
+       hx-trigger="load delay:340ms"
+       hx-swap="innerHTML"></div>
+  {% endcall %}
+
+  {#- DISPATCH, LAST AND FOLDED. Reported 2026-08-31: "put the dispatch at the
+      bottom and collapsed, also taking less space when open."
+
+      It was the longest thing on the surface and sat in the middle of it, so
+      everything after it was below a screen of news. Today's job is to let a
+      day be set up; the full news file is what the News surface is for. This
+      is the tail of the page now, closed, and the summary line carries the
+      count so nothing is hidden — only folded. `.dispatch-fold` caps the open
+      height and scrolls inside itself, so opening it costs a fixed amount of
+      page rather than an unbounded one. -#}
+  <details class="dispatch-fold u-mb-6">
+    <summary class="dispatch-sum">
+      <span class="dispatch-lead">News</span>
+      <span id="dispatch-counts" class="dispatch-hint">close to your work</span>
+    </summary>
+    <div class="dispatch-body">
+
+  <div hx-get="/api/partial/today/news-rail?folded=1"
+       hx-trigger="load delay:600ms"
+       hx-swap="outerHTML">
+    {{ sec_label("Close to your work", tail="LOADING NEWS") }}
+    <div class="panel" style="padding:var(--m-space-5) var(--m-space-5);min-height:120px;">
+      <div class="skeleton skeleton-bar w-40 u-mb-4"></div>
+      <div class="skeleton skeleton-bar w-100 u-mb-2" style="height:12px;"></div>
+      <div class="skeleton skeleton-bar w-80 u-mb-2" style="height:12px;"></div>
+      <div class="skeleton skeleton-bar w-60" style="height:12px;"></div>
+    </div>
+  </div>
+    </div>
+  </details>
+
+  <!-- ===== 10. System health footer ===== -->
+  <div hx-get="/api/partial/today/system-health"
+       hx-trigger="load delay:800ms"
+       hx-swap="outerHTML"></div>
+
+</div><!-- /.page -->
+
+<!-- News summary modal host -->
+<div id="news-modal-host"></div>
+{% endblock %}

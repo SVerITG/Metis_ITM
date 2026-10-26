@@ -1,0 +1,157 @@
+<!-- learning_ideas.html — Course ideas: customizable catalog.
+     Wrapped in #course-ideas-section so add/delete swaps replace the whole
+     partial instead of just the catalog grid (prevents hero duplication). -->
+<div id="course-ideas-section">
+{% set other_ideas = courses | rejectattr('slug', 'equalto', 'statistics-adaptive') | list %}
+{% set categories = other_ideas | map(attribute='category') | unique | list %}
+
+<!-- ─── HERO: Adaptive Statistics ─────────────────────────────────────── -->
+<div class="panel panel-pad u-mb-5 panel--lg" style="background:var(--m-accent-wash);border:1px solid var(--m-accent-soft,var(--m-line));">
+  <div class="kicker kicker--accent u-mb-3">
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="8,1 10,6 15,6 11,9.5 12.5,15 8,12 3.5,15 5,9.5 1,6 6,6"/></svg>
+    <span>FEATURED · ADAPTIVE</span>
+  </div>
+  <div class="u-mb-2" style="font-family:var(--m-display);font-size:var(--t-h3);font-weight:500;letter-spacing:-0.02em;color:var(--m-ink);">
+    Statistics — Adaptive
+  </div>
+  <div class="ed u-mb-4" style="font-size:var(--t-small);color:var(--m-muted);line-height:1.5;">
+    Pick any topic below and Claude will build a purpose-built course modelled on the Statistics for Epidemiology structure — same modules, learning objectives, and spaced repetition design, adapted to your chosen topic.
+  </div>
+  <div class="u-mb-4" style="display:flex;flex-wrap:wrap;gap:var(--m-space-2);">
+    {% for c in other_ideas %}
+    <button class="chip chip--plain" style="cursor:pointer;border:1px solid var(--m-accent-soft,var(--m-line));background:var(--m-surface-1);"
+            onclick='openCourseWizard({{ c.slug | tojson }}, {{ c.title | tojson }})'>{{ c.title }}</button>
+    {% endfor %}
+  </div>
+  <div class="u-row">
+    <button class="btn btn--primary btn--caps"
+            onclick="openCourseWizard('', 'Adaptive Statistics')">
+      Build adaptive course
+    </button>
+    <span class="u-label">
+      OPENS CLAUDE DESKTOP
+    </span>
+  </div>
+</div>
+
+<!-- ─── Catalog header ──────────────────────────────────────────────────── -->
+<div class="u-row u-mb-4" style="gap:var(--m-space-3);">
+  <div class="u-label u-grow">
+    {{ other_ideas | length }} IDEAS · CLICK TO BUILD
+  </div>
+  <button class="btn btn--ghost btn--caps" style="font-size:var(--t-micro);"
+          onclick="toggleAddIdeaForm()"
+          id="add-idea-toggle-btn">+ Add course idea</button>
+</div>
+
+<!-- ─── Add course idea form (hidden by default) ─────────────────────────── -->
+<div class="u-mb-5 u-hide" id="add-idea-form">
+  <form class="u-col u-tile" hx-post="/api/course/idea/add"
+        hx-target="#course-ideas-section"
+        hx-swap="outerHTML"
+        style="padding:var(--m-space-4) var(--m-space-4);gap:var(--m-space-3);">
+    <div class="u-label">NEW COURSE IDEA</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--m-space-3);">
+      <div>
+        <label style="font-size:var(--t-micro);color:var(--m-muted);display:block;margin-bottom:var(--m-space-1);">Course title *</label>
+        <input name="title" type="text" required placeholder="e.g. Network Analysis in R"
+               style="width:100%;box-sizing:border-box;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-2) var(--m-space-2);font-size:var(--t-small);background:var(--m-surface-1);color:var(--m-ink);" aria-label="e.g. Network Analysis in R">
+      </div>
+      <div>
+        <label style="font-size:var(--t-micro);color:var(--m-muted);display:block;margin-bottom:var(--m-space-1);">Group / category</label>
+        <input name="category" type="text" placeholder="e.g. statistics, methods, tools"
+               list="existing-categories"
+               style="width:100%;box-sizing:border-box;border:1px solid var(--m-line);border-radius:var(--m-radius);padding:var(--m-space-2) var(--m-space-2);font-size:var(--t-small);background:var(--m-surface-1);color:var(--m-ink);" aria-label="e.g. statistics, methods, tools">
+        <datalist id="existing-categories">
+          {% for cat in categories %}<option value="{{ cat }}">{% endfor %}
+        </datalist>
+      </div>
+    </div>
+    <div style="display:flex;gap:var(--m-space-2);">
+      <button type="submit" class="btn btn--primary btn--caps">Add</button>
+      <button type="button" class="btn btn--ghost btn--caps" onclick="toggleAddIdeaForm()">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<!-- ─── Catalog ────────────────────────────────────────────────────────── -->
+<div id="course-ideas-catalog">
+{% if not other_ideas %}
+<div class="panel"><div class="empty-row"><em>No course ideas yet — add one above.</em></div></div>
+{% else %}
+<div class="grid grid-2">
+{% for cat in categories %}
+<div class="panel u-col">
+  <div class="u-row u-rule" style="padding:var(--m-space-3) var(--m-space-4) var(--m-space-3);">
+    <span class="kicker u-grow" style="margin:0;padding:0;border:none;background:none;">
+      <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="10" height="10"/><line x1="3" y1="6" x2="13" y2="6"/>
+      </svg>
+      <span>{{ (cat or 'general') | upper }}</span>
+    </span>
+    <span class="u-label">
+      {{ other_ideas | selectattr('category','equalto',cat) | list | length }}
+    </span>
+  </div>
+  {% for c in other_ideas if c.category == cat %}
+  <div style="display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:center;
+              padding:10px 16px;{% if not loop.last %}border-bottom:1px solid var(--m-rule-soft);{% endif %}"
+       id="idea-row-{{ c.id }}">
+    <span class="u-title" style="line-height:1.3;">{{ c.title }}</span>
+    <button class="btn btn--ghost btn--caps" style="font-size:var(--t-micro);padding:var(--m-space-1) var(--m-space-2);"
+            onclick='openCourseWizard({{ c.slug | tojson }}, {{ c.title | tojson }})'>Build</button>
+    <button class="btn btn--ghost btn--caps" style="font-size:var(--t-micro);padding:var(--m-space-1) var(--m-space-2);color:var(--m-danger);border-color:transparent;"
+            title="Remove this course idea"
+            hx-delete="/api/course/idea/{{ c.id }}"
+            hx-target="#course-ideas-section"
+            hx-swap="outerHTML"
+            hx-confirm="Remove '{{ c.title }}' from your ideas?">✕</button>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+</div>
+{% endif %}
+</div><!-- #course-ideas-catalog -->
+</div><!-- #course-ideas-section -->
+
+<script>
+function toggleAddIdeaForm() {
+  const form = document.getElementById('add-idea-form');
+  const btn  = document.getElementById('add-idea-toggle-btn');
+  if (form.style.display === 'none') {
+    form.style.display = 'block';
+    btn.textContent = '✕ Cancel';
+    form.querySelector('input[name="title"]').focus();
+  } else {
+    form.style.display = 'none';
+    btn.textContent = '+ Add course idea';
+  }
+}
+
+function toggleLessonEdit(id) {
+  const el = document.getElementById('lesson-edit-' + id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function saveLessonProgress(id) {
+  const payload = {
+    current_lesson: document.getElementById('last-' + id)?.value || '',
+    next_lesson:    document.getElementById('next-' + id)?.value || '',
+    course_url:     document.getElementById('url-'  + id)?.value || '',
+    lesson_notes:   document.getElementById('notes-'+ id)?.value || '',
+  };
+  fetch('/api/course/' + id + '/update-progress', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  }).then(r => r.json()).then(() => {
+    toggleLessonEdit(id);
+    // Reload the courses section
+    htmx.trigger(document.querySelector('[hx-get="/api/partial/learning/courses-archive"]') ||
+                  document.querySelector('[hx-get="/api/partial/learning/courses"]'), 'load');
+    if (window.showToast) showToast('Progress saved');
+  });
+}
+</script>

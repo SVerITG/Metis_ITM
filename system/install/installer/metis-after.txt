@@ -1,0 +1,48 @@
+METIS IS INSTALLED — HERE IS HOW TO START
+
+
+  1. OPEN CLAUDE DESKTOP
+  Use the "Metis — Open AI" shortcut. Metis is already connected.
+  If Claude Desktop was open during setup, setup offers to restart it;
+  otherwise quit it completely (also from the tray icon) and open it again.
+
+  Not installed yet? Setup tried to install it for you. If it is still
+  missing, download it from  https://claude.ai/download  — Metis connects
+  itself the first time it opens.
+
+
+  2. SAY HELLO
+  Type anything — "Hi Metis" is enough. Metis introduces itself and, if
+  setup did not catch everything, asks a few questions about your work.
+  Prefer a guided start? In the message box, open the "+" menu and pick
+  the  metis-tour  prompt.
+
+
+  3. OPEN THE DASHBOARD  (if you chose the full install)
+  Double-click "Metis" on your desktop. It opens in your browser at
+  http://127.0.0.1:8080 — a tour of every tab is at  /tour .
+  Want to see it with something in it first? The tour page can load a
+  fictional sample workspace, and remove it again with one click.
+
+
+  IF SOMETHING DOES NOT WORK
+  Metis checks itself every day and repairs what it can; the result is
+  on the Metis tab of the dashboard. To check now, ask Metis in Claude:
+  "check that everything works"  (or pick the  metis-verify  prompt).
+
+
+  ABOUT THE ANTHROPIC API KEY — OPTIONAL
+  Claude Desktop and Claude Code use your Claude account; Metis needs
+  nothing more to work. An API key (paid separately, from
+  https://console.anthropic.com) only adds background features such as
+  the automatic morning brief. You can add one later on the dashboard.
+  It is stored on this computer, in Documents\Metis\system\.env.
+
+
+  WHAT STAYS ON YOUR COMPUTER
+  Your files, library, notes and Metis's memory stay on this computer.
+  What you ask or paste into Claude is processed by Anthropic's Claude
+  service, as with any Claude conversation.
+
+
+  Documentation and help:  https://github.com/SVerITG/Metis

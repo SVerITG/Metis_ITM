@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% from "partials/_section.html" import sec_label, zone, tabset %}
+{% block title %}{{ area.title }}{% endblock %}
+
+{#
+  ══════════════════════════════════════════════════════════════════════════════
+  A FOCUS SURFACE — one template, any number of surfaces.
+
+  Every other surface here is a bespoke template. This one is not, and that is
+  the feature: the researcher adds and removes focus areas himself, so a surface
+  that needed a developer to exist would not be a surface a user can add. `area`
+  is a row from `focus_areas`; everything on the page is that row's lens applied
+  to tables that already own their content.
+
+  EVERY FOCUS CHOOSES ITS OWN SECTIONS (2026-09-03). `sections` is a JSON list
+  of keys on the focus row, and each block below is guarded by it. Before this,
+  all nine sections rendered for every focus — the shape of the first focus (a
+  subject to stay current on) was imposed on every later one, including a
+  reference focus that wants its lookup tools and what is new, and has no use for
+  a safe or a brief. An EMPTY list means the historical default, so nothing that
+  predates the change moves.
+
+  ORDER IS AN ARGUMENT, and it changed on 2026-08-26 when the surface stopped
+  being a reading list and became a place you build something:
+
+      counts     what you have made, and what is waiting on you
+      safe       what you kept — the thing that grows over weeks
+      brief      the morning brief for one subject, on demand
+      thinking   notes, ideas, and questions you can EXPLORE
+      feed       news through the lens, keep / not-for-me
+      reading    literature through the lens, keep / not-for-me
+      shelf      lens management, last because you touch it least
+
+  The safe outranks the feed deliberately. A feed is what arrived; a safe is what
+  you decided. On a surface meant to accumulate, the second is the point and the
+  first is the raw material.
+
+  EVERY SECTION IS A FOLD. `zone()` remembers its state per key in localStorage,
+  so the shape of this page belongs to the reader — and the summary line always
+  carries the fact, so folding costs nothing but the detail.
+  ══════════════════════════════════════════════════════════════════════════════
+#}
+
+{% block content %}
+<div class="page">
+
+  <div class="page-head">
+    <div>
+      <div class="page-eyebrow">
+        FOCUS{% if area.shelf_slot %} · SHELF {{ area.shelf_slot }}{% endif %}
+        · {{ area.state|upper }}
+      </div>
+      <h1 class="page-title">{{ area.title }}</h1>
+      {% if area.subtitle %}
+      <div class="u-ed" style="font-size:var(--t-small);margin-top:var(--m-space-1);">{{ area.subtitle }}</div>
+      {% endif %}
+    </div>
+    <div class="page-meta">
+      {% if pulse.new_news is not none and (pulse.new_news or pulse.new_reading) %}
+      {{ pulse.new_news }} NEW BRIEF{{ '' if pulse.new_news == 1 else 'S' }}
+      · {{ pulse.new_reading }} NEW PAPER{{ '' if pulse.new_reading == 1 else 'S' }}
+      {% else %}
+      NOTHING NEW SINCE YOUR LAST VISIT
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── 1 · The overview line — always visible, never folded ──────────────── #}
+  <div id="focus-counts">{% include "partials/focus_counts.html" %}</div>
+
+  {# ── 2 · Pulse ─────────────────────────────────────────────────────────── #}
+  {# ── Tools — what this focus is FOR, when the answer is a lookup ────────
+       First on the page for a reference focus. The researcher built an accuracy
+       catalogue and then could not find it, because a focus had nowhere to put
+       a thing you open. A section that only appears when the focus declares
+       links costs the other focuses nothing. -#}
+    {#- TABS, not a stack. Eleven zones sat here one under another, each folded
+        shut, so browsing meant opening and closing eleven folds in order.
+        Reported 2026-09-13: "many different sections, but I cannot click through
+        them". Same sections and the same gates — the reader chooses between them
+        now instead of scrolling past them. -#}
+    {{ tabset([("changed","What changed"),("latest","Latest"),("close","Close to my work"),("reading","Reading"),("thinking","Your thinking")], key="focus-" ~ area.slug) }}
+
+    <div class="ui-tabpane" data-tabset="focus-{{ area.slug }}" data-tab="changed">
+  {% if "pulse" in sections %}
+  {% call zone("What changed", key="focus-" ~ area.slug ~ "-pulse",
+               tail="SINCE YOUR LAST VISIT") %}
+    <div id="focus-pulse">{% include "partials/focus_pulse.html" %}</div>
+  {% endcall %}
+  {% endif %}
+  {% if "whatsnew" in sections %}
+  {#- "What changed" (above) is the headline pair of numbers; this is the same
+      window broken into families with the items under each. Two boxes both
+      called "what's new" in one tab is a reader wondering which one is the real
+      one, so the names say which is which. -#}
+  {% call zone("What changed, in detail", key="focus-" ~ area.slug ~ "-whatsnew",
+               tail=(area.n_new ~ " SINCE YOUR LAST VISIT") if area.n_new
+                    else "BY FAMILY", open=True) %}
+    <div id="focus-whatsnew">{% include "partials/focus_whatsnew.html" %}</div>
+  {% endcall %}
+  {% endif %}
+    </div>
+
+    <div class="ui-tabpane" data-tabset="focus-{{ area.slug }}" data-tab="latest" hidden>
+  {% if "feed" in sections %}
+  {% call zone("Latest", key="focus-" ~ area.slug ~ "-feed",
+               tail=news.n_live ~ " UNJUDGED"
+                    + (" · " ~ news.n_muted ~ " QUIETER" if news.n_muted else ""),
+               open=True) %}
+    <div id="focus-feed">{% include "partials/focus_feed.html" %}</div>
+  {% endcall %}
+  {% endif %}
+  {% if "briefings" in sections %}
+  {% call zone("The editions", key="focus-" ~ area.slug ~ "-briefings",
+               tail=(briefings|length) ~ " STORED", open=True) %}
+    <div id="focus-briefings">{% include "partials/focus_briefings.html" %}</div>
+  {% endcall %}
+  {% endif %}
+    </div>
+
+    <div class="ui-tabpane" data-tabset="focus-{{ area.slug }}" data-tab="close" hidden>
+      {#- New. "Close to my work" existed in no router and no template —
+          it had to be built, not fixed. -#}
+      {#- The id lives on the container, not inside the partial: the verdict
+          buttons swap innerHTML into `#focus-close`, and a partial carrying its
+          own wrapper would nest a second element with the same id on every
+          judgement. -#}
+      <div id="focus-close"
+           hx-get="/api/partial/focus/{{ area.slug }}/close-to-work"
+           hx-trigger="revealed once" hx-swap="innerHTML">
+        <div class="panel panel--md" style="min-height:110px;"></div>
+      </div>
+    </div>
+
+    <div class="ui-tabpane" data-tabset="focus-{{ area.slug }}" data-tab="reading" hidden>
+  {% if "reading" in sections %}
+  {% call zone("Reading", key="focus-" ~ area.slug ~ "-reading",
+               tail=reading.n_live ~ " UNJUDGED"
+                    + (" · " ~ reading.n_muted ~ " QUIETER" if reading.n_muted else "")) %}
+    <div id="focus-reading">{% include "partials/focus_reading.html" %}</div>
+  {% endcall %}
+  {% endif %}
+  {% if "safe" in sections %}
+  {% call zone("The safe", key="focus-" ~ area.slug ~ "-safe",
+               tail=counts.saved ~ " KEPT FOR REFLECTION", open=True) %}
+    <div id="focus-safe">{% include "partials/focus_safe.html" %}</div>
+  {% endcall %}
+  {% endif %}
+    </div>
+
+    <div class="ui-tabpane" data-tabset="focus-{{ area.slug }}" data-tab="thinking" hidden>
+  {% if "thinking" in sections %}
+  {% call zone("Your thinking", key="focus-" ~ area.slug ~ "-thinking",
+               tail="NOTES · IDEAS · QUESTIONS", open=True) %}
+    <div id="focus-thinking">{% include "partials/focus_thinking.html" %}</div>
+    <span id="focus-explore-spin" class="htmx-indicator fb-spin"
+          style="display:block;margin-top:var(--m-space-2);">searching your own material…</span>
+    <div id="focus-explore" style="margin-top:var(--m-space-3);"></div>
+  {% endcall %}
+  {% endif %}
+  {% if area.overview and "overview" in sections %}
+  {% call zone("Overview", key="focus-" ~ area.slug ~ "-overview",
+               tail="WHAT MATTERS HERE", open=True) %}
+    <div class="panel panel--md">
+      <div class="focus-prose">{{ area.overview | md | safe }}</div>
+    </div>
+  {% endcall %}
+  {% endif %}
+  {% if "brief" in sections %}
+  {% call zone("Brief", key="focus-" ~ area.slug ~ "-brief",
+               tail=("LAST " ~ counts.last_brief[:10]) if counts.last_brief else "NOT YET GENERATED") %}
+    <div id="focus-brief">{% include "partials/focus_brief.html" %}</div>
+  {% endcall %}
+  {% endif %}
+  {% if "tools" in sections and links %}
+  {% call zone("Reference tools", key="focus-" ~ area.slug ~ "-tools",
+               tail=(links|length) ~ (" TOOL" if links|length == 1 else " TOOLS"),
+               open=True) %}
+    <div id="focus-tools">{% include "partials/focus_tools.html" %}</div>
+  {% endcall %}
+  {% endif %}
+  {# ── 9 · Shelf management ──────────────────────────────────────────────── #}
+  {% call zone("Shelf", key="focus-" ~ area.slug ~ "-shelf",
+               tail=(shelf|length) ~ " / " ~ max_shelf ~ " SLOTS") %}
+    <div class="panel panel--md">
+      <div class="u-row u-row--wrap">
+        {% for a in all_areas %}
+        <span style="font-family:var(--m-mono);font-size:10.5px;padding:4px 9px;
+                     border:1px solid var(--m-line);border-radius:4px;
+                     {% if a.slug == area.slug %}border-color:var(--m-accent);{% endif %}
+                     {% if a.state == 'archived' %}opacity:.55;{% endif %}">
+          <a href="/focus/{{ a.slug }}" style="text-decoration:none;color:inherit;">
+            {% if a.shelf_slot %}{{ a.shelf_slot }}·{% endif %}{{ a.title }}
+          </a>
+          <span style="color:var(--m-muted);"> {{ a.state }}</span>
+        </span>
+        {% endfor %}
+      </div>
+      <div style="display:flex;gap:var(--m-space-2);margin-top:var(--m-space-3);flex-wrap:wrap;">
+        {% for s, label in [('active','Put on shelf'), ('following','Follow only'),
+                            ('archived','Archive')] %}
+          {% if area.state != s %}
+          <button hx-post="/api/focus/{{ area.slug }}/state"
+                  hx-vals='{"state": "{{ s }}"}'
+                  hx-swap="none"
+                  hx-on::after-request="window.location.reload()"
+                  class="ft-btn">{{ label }}</button>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <p style="margin:var(--m-space-3) 0 0;font-size:var(--t-meta);color:var(--m-muted);line-height:1.55;">
+        Archiving files the <strong>lens</strong>, not the contents. Every note, idea,
+        question and kept item keeps its <code>focus:{{ area.slug }}</code> tag or its
+        row in the safe — papers stay in your library, briefs stay in the news
+        history. A focus never owned them, so removing it cannot take them away.
+      </p>
+    </div>
+  {% endcall %}
+    </div>
+
+</div>
+{% endblock %}

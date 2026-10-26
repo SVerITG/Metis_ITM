@@ -1,0 +1,79 @@
+{% if overdue or due_today %}
+<div class="u-mb-6" id="work-due-today">
+  {#- `bare` on Today, where this sits UNDER a shared heading with the starred
+      cards. Two headings over two panels answering one question is what the
+      merge exists to remove. On Work it keeps its own. -#}
+  {% if not bare %}
+  <h2 class="sec-label u-mb-3">
+    <span>Due Today</span>
+    {% if overdue %}
+    <span class="stat is-urgent">{{ overdue|length }} overdue</span>
+    {% endif %}
+  </h2>
+  {% endif %}
+  <div class="panel">
+    {#- ONE ROW ANATOMY (see .mrow in styles.css). State left in a fixed slot,
+        title, quiet meta, actions right — the same four slots as News, Library
+        and Learning, so the eye lands in the same place on every list.
+
+        The state slot carries WHEN, not "overdue": the word was already in the
+        section heading above ("1 overdue") and repeating it per row cannot
+        distinguish rows. The date can. -#}
+    {% for task in overdue %}
+    <div class="mrow row-hit is-late">
+      <span class="mrow-state"><span class="stat is-urgent tnum">{{ task.due_date }}</span></span>
+      <span class="mrow-body">
+        <span class="mrow-title">{{ task.title or 'Untitled task' }}</span>
+        {% if task.project %}<span class="mrow-meta">{{ task.project }}</span>{% endif %}
+      </span>
+      <span class="mrow-acts acts">
+        <button type="button" class="todo-check" title="Mark done"
+                onclick="workTaskDone('{{ task.id }}', this)"></button>
+        {#- REMOVING A THING WAS ONLY POSSIBLE ON WORK. Reported 2026-09-01: "how
+            to easily add or delete tasks/things to do." A row you can finish
+            but not withdraw forces the wrong verb on anything entered by
+            mistake — you mark it done, and it counts as work you did. -#}
+        <button type="button" class="act" title="Remove this task"
+                hx-post="/api/task/{{ task.id }}/drop?bare={{ 1 if bare else 0 }}"
+                hx-target="#work-due-today" hx-swap="outerHTML"
+                hx-confirm="Remove “{{ task.title|default('this task') }}”?">&#215;</button>
+      </span>
+    </div>
+    {% endfor %}
+    {% for task in due_today %}
+    <div class="mrow row-hit">
+      <span class="mrow-state"><span class="stat is-quiet">today</span></span>
+      <span class="mrow-body">
+        <span class="mrow-title">{{ task.title or 'Untitled task' }}</span>
+        {% if task.project %}<span class="mrow-meta">{{ task.project }}</span>{% endif %}
+      </span>
+      <span class="mrow-acts acts">
+        <button type="button" class="todo-check" title="Mark done"
+                onclick="workTaskDone('{{ task.id }}', this)"></button>
+        {#- REMOVING A THING WAS ONLY POSSIBLE ON WORK. Reported 2026-09-01: "how
+            to easily add or delete tasks/things to do." A row you can finish
+            but not withdraw forces the wrong verb on anything entered by
+            mistake — you mark it done, and it counts as work you did. -#}
+        <button type="button" class="act" title="Remove this task"
+                hx-post="/api/task/{{ task.id }}/drop?bare={{ 1 if bare else 0 }}"
+                hx-target="#work-due-today" hx-swap="outerHTML"
+                hx-confirm="Remove “{{ task.title|default('this task') }}”?">&#215;</button>
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+async function workTaskDone(taskId, checkEl) {
+  const row = checkEl.closest('.todo-row');
+  await fetch('/api/task/' + taskId + '/done', {method:'POST'});
+  if (row) { row.style.opacity = '0.3'; row.style.textDecoration = 'line-through'; setTimeout(() => row.remove(), 500); }
+  const panel = document.querySelector('#work-due-today .panel');
+  if (panel && panel.querySelectorAll('.todo-row').length <= 1) {
+    const section = document.getElementById('work-due-today');
+    if (section) { section.style.opacity = '0'; setTimeout(() => section.remove(), 400); }
+  }
+}
+</script>
+{% endif %}

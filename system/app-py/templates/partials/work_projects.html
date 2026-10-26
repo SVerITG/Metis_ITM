@@ -1,0 +1,390 @@
+<!-- work_projects.html — Project cards with drag-reorder + collapse + per-type launchers -->
+{% if not projects %}
+<div class="panel panel-pad" style="text-align:center;padding:var(--m-space-5) var(--m-space-5);border:1px dashed var(--m-line);">
+  <p class="ed" style="font-size:var(--t-body);color:var(--m-muted);margin:0 0 var(--m-space-2);">
+    <strong>No active projects yet.</strong>
+  </p>
+  <p class="ed" style="font-size:var(--t-small);color:var(--m-muted);margin:0 0 var(--m-space-3);">
+    Add a project to track its tasks, progress, and notes in one place.
+  </p>
+  <button class="btn btn--primary btn--caps" onclick="openAddProjectModal()">+ Add your first project</button>
+</div>
+{% else %}
+{#- WHEN NOTHING CAN LAUNCH, SAY IT ONCE. Every launcher here starts a Windows
+    application, so when the handler for those is not registered they all fail
+    identically — and the page used to report that as `[Errno 8] Exec format
+    error` on whichever button you happened to press. This states the condition
+    once, at the top, with the one command that fixes it. It is not the
+    researcher's mistake and it is not permanent. -#}
+{% if not interop_ok %}
+<div class="launch-down" role="status">
+  <span class="launch-down-mark" aria-hidden="true">⚠</span>
+  <span class="launch-down-text">{{ interop_why }}</span>
+</div>
+{% endif %}
+{#- ── GROUPED BY CATEGORY, EACH SECTION COLLAPSIBLE (2026-09-03) ────────────
+    Sixteen cards arrived in one flat two-column grid ordered by a
+    `display_order` nobody had set. Grouping them is what was asked for, and the
+    heading carries what the group COSTS — projects, open tasks, and how many
+    are alive — so a closed section still tells you whether to open it.
+
+    The cards themselves are untouched. A thinner row would have read better in
+    a mockup and thrown away the next step, the task list and the launchers,
+    which is most of why the card exists.
+
+    Uncategorised comes last and is NAMED. Two projects are in it, and a bucket
+    you cannot see is a bucket you never empty. -#}
+<div id="project-groups">
+{#- FLAT (the ALL tab) vs GROUPED (a category tab).
+    One synthetic section stands in for the groups when flat, so the card markup
+    below is written once and never forks between the two views. -#}
+{% set _sections = [{'name': '', 'slug': 'all', 'is_uncategorised': False,
+                     'projects': projects, 'n_projects': projects|length,
+                     'n_open': 0, 'n_hot': 0}] if flat else (groups or []) %}
+{% for g in _sections %}
+{% if not flat %}
+{#- OPEN IF SOMETHING IN IT IS ALIVE. This is what "active and not so active"
+    buys: the page opens on the work that is moving, and five months of dormant
+    projects are one click away instead of 1,500px of scrolling. Uncategorised
+    also opens, because it is asking to be dealt with.
+
+    A reader's own choice wins over this default and is remembered — see
+    `metis.work.cats` in work.html. -#}
+<details class="cat-sec{% if g.is_uncategorised %} cat-sec--uncat{% endif %}{% if g.n_projects == 1 %} cat-sec--single{% endif %}"
+         id="cat-{{ g.slug }}" data-cat="{{ g.name }}"
+         {% if g.n_hot or g.is_uncategorised %}open{% endif %}>
+  <summary class="cat-sum">
+    <span class="cat-name">{{ g.name }}</span>
+    {#- Three states, not two. "Active and not so active" was the ask; the data
+        needs a third, because four projects have never been opened at all and
+        that is not the same as one that went quiet in June. -#}
+    {% if g.n_hot %}<span class="cat-live" title="{{ g.n_hot }} touched in the last fortnight">{{ g.n_hot }} live</span>{% endif %}
+    <span class="cat-count">{% if g.n_projects %}{{ g.n_projects }} project{{ 's' if g.n_projects != 1 else '' }}{% if g.n_open %} · {{ g.n_open }} open{% endif %}{% else %}empty{% endif %}</span>
+    <span class="cat-tools">
+      <button type="button" class="cat-tool" title="Move this section up"
+              onclick="event.preventDefault();event.stopPropagation();catReorder('{{ g.name|e }}','up')">↑</button>
+      <button type="button" class="cat-tool" title="Move this section down"
+              onclick="event.preventDefault();event.stopPropagation();catReorder('{{ g.name|e }}','down')">↓</button>
+      {% if not g.is_uncategorised %}
+      <button type="button" class="cat-tool" title="Rename, merge or remove this category"
+              onclick="event.preventDefault();event.stopPropagation();catManage('{{ g.name|e }}',{{ g.n_projects }})">⋯</button>
+      {% endif %}
+    </span>
+  </summary>
+{% endif %}
+  <div class="grid grid-2 grid--top{% if not flat %} cat-body{% endif %}">
+  {%- if not g.projects and not flat %}
+  {#- An empty category is a place, not an error: it exists so a project can be
+      moved into it. Say what to do with it rather than showing a blank box. -#}
+  <p class="cat-empty">Nothing filed here yet — click a project's category label to move it in.</p>
+  {% endif %}
+  {% for p in g.projects %}
+  <div class="panel panel-pad project-card"
+       data-project-id="{{ p.id }}"
+       {#- Not draggable in ALL: that view is ordered by recent work, so a drag
+           would write a display_order the reader never sees take effect. The
+           manual arrangement lives on the category tabs, where it shows. -#}
+       draggable="{{ 'false' if flat else 'true' }}"
+       style="padding:0;display:flex;flex-direction:column;cursor:default;transition:opacity .15s,outline .1s;
+              border-left:3px solid {{ p.accent_color or 'transparent' }};">
+
+    <!-- ── Header: TITLE on its own line, symbols under it ── -->
+    {#- One row held the drag handle, the activity glyph, the title, every chip,
+        the open count and four buttons. A title like "Hypertension Cohort Follow-up —
+        Wave 3 (Northern and Central Districts)" then competed with all of it for width and
+        came out clipped mid-word, which is what read as "mistakes in how they
+        are displayed". Nothing was wrong with the titles themselves.
+
+        Asked for 2026-09-13: "the title of the project should be the upper line,
+        with symbols below it". So the title gets a line of its own and wraps
+        properly, and the marks that describe it sit underneath where they can be
+        scanned as a row. -#}
+    <div class="proj-header proj-header--stacked u-rule"
+         style="padding:var(--m-space-4) var(--m-space-4) var(--m-space-3);">
+      <div class="proj-titleline">
+      <!-- Drag handle stays with the title: it is the grip for the whole card -->
+      <span class="proj-drag-handle u-fixed{% if flat %} u-hide{% endif %}"
+            title="Drag to reorder"
+            style="cursor:grab;color:var(--m-muted);font-size:var(--t-body);line-height:1;user-select:none;">⠿</span>
+      {#- HOW ALIVE IS THIS. Three glyphs, not a colour scale, so it survives a
+          greyscale print and a colour-blind reader — and three states because
+          "never opened" is genuinely not "went quiet in June". The card already
+          prints the age in words further down; this is the version you can scan
+          a whole section with. -#}
+      <span class="proj-live u-fixed proj-live--{{ p.activity or 'never' }}"
+            title="{% if p.activity == 'hot' %}Touched in the last fortnight{% elif p.activity == 'cold' %}Quiet for {{ p.quiet_days }} days{% else %}Never opened{% endif %}"
+            aria-label="{% if p.activity == 'hot' %}active{% elif p.activity == 'cold' %}quiet{% else %}never opened{% endif %}"
+            >{% if p.activity == 'hot' %}●{% elif p.activity == 'cold' %}○{% else %}⌾{% endif %}</span>
+      <!-- Title (clickable → detail panel) -->
+      <div class="u-grow u-title u-title--lg" onclick="openProjectDetail('{{ p.id }}')"
+           style="font-weight:500;line-height:1.2;cursor:pointer;"
+           title="Open project details" role="button" tabindex="0">{{ p.title }}</div>
+      </div><!-- /.proj-titleline -->
+
+      {#- THE SYMBOL ROW. Everything that describes the project rather than names
+          it: how alive it is, what it is filed under, how much is open, and the
+          controls. Scannable as a row precisely because the title is no longer in
+          it. -#}
+      <div class="proj-metaline">
+      {#- OPEN WORK, IN THE HEADER. The router has computed `open_tasks` for a
+          while and the card never printed it, so a collapsed project said what it
+          was called and nothing about whether it needed anything. Asked for
+          2026-09-11: a minimised card should carry the title, the category and
+          how many tasks are open. Title and category were already here; this is
+          the third. Silent at zero — a card with nothing open should look
+          finished, not annotated. -#}
+      {% if p.open_tasks %}
+      <span class="proj-open u-fixed" title="{{ p.open_tasks }} open task{{ 's' if p.open_tasks != 1 else '' }} in this project">{{ p.open_tasks }} open</span>
+      {% endif %}
+      {#- Four independent fields — category, domain, tags and project_type —
+          each rendered its own chip, and they overlap: a project filed as
+          category "software" with project_type "software" showed
+          "SOFTWARE SOFTWARE". Seen in a screenshot; invisible in the template,
+          where the four blocks sit apart and each looks correct.
+
+          Collected and de-duplicated case-insensitively, ARTICLE kept separate
+          because it is a state rather than a label. -#}
+      {#- These are CATEGORIES — permanent facts about the project, not states.
+          They were pills in the same olive as OVERDUE and BLOCKED, so a card
+          announcing "software · malaria" shouted exactly as loudly
+          as a card that was late. Per the vocabulary in styles.css: a pill is
+          a state, plain small text is a category. Text was NOT truncated in
+          Python any more — `[:16]` produced "SLEEPING-SICKNES"; .tag--clip
+          clips at the available width and draws a real ellipsis. -#}
+      {% set _chips = [] %}
+      {% if p.category %}{% set _ = _chips.append(p.category) %}{% endif %}
+      {% if p.domain %}{% set _ = _chips.append(p.domain) %}{% endif %}
+      {% for tag in (p.tags_list or [])[:3] %}{% set _ = _chips.append(tag) %}{% endfor %}
+      {% if p.project_type and p.project_type not in ('research', 'article') %}
+        {% set _ = _chips.append(p.project_type) %}
+      {% endif %}
+      {#- THE CATEGORY CHIP IS NOW THE CONTROL THAT CHANGES IT (2026-09-03).
+          `/api/project/update` has always accepted `category` and no surface
+          exposed it, so re-filing a project meant editing the database. The
+          thing that displays a fact is the most discoverable place to change
+          it, and it costs no extra furniture on an already busy card.
+
+          Only the CATEGORY is clickable — domain, tags and project_type render
+          as before. They are different fields, and making all four look
+          actionable would imply four editors that do not exist. -#}
+      {% set _seen = [] %}
+      {% for c in _chips %}
+        {% if c and c.lower() not in _seen %}
+          {% set _ = _seen.append(c.lower()) %}
+          {% if c == p.category %}
+          <button type="button" class="tag tag--clip tag--edit u-fixed"
+                  title="In “{{ c }}” — click to move it to another category"
+                  onclick='projMoveCategory({{ p.id | tojson }}, {{ c | tojson }})'>{{ c }}</button>
+          {% else %}
+          <span class="tag tag--clip u-fixed" title="{{ c }}">{{ c }}</span>
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+      {%- if not p.category %}
+      {#- An uncategorised project needs the control MORE, not less. -#}
+      <button type="button" class="tag tag--clip tag--edit tag--needs u-fixed"
+              title="This project has no category — click to file it"
+              onclick='projMoveCategory({{ p.id | tojson }}, "")'>+ file</button>
+      {% endif %}
+      {% if p.launcher_type == 'article' or p.project_type == 'article' %}
+      <span class="tag tag--accent u-fixed" title="Opens a manuscript">article</span>
+      {% endif %}
+      <!-- Notes toggle -->
+      <button class="u-fixed btn btn--ghost" onclick="toggleProjectNotes('{{ p.id }}')"
+              title="Project notes"
+              style="padding:var(--m-space-1) var(--m-space-1);font-family:var(--m-mono);font-size:var(--t-small);color:var(--m-muted);line-height:1;">📝</button>
+      <!-- Untrack button -->
+      <button class="u-fixed btn btn--ghost" onclick='untrackProject({{ p.id | tojson }}, {{ p.title | tojson }})'
+              title="Hide this project (doesn't delete it)"
+              style="padding:var(--m-space-1) var(--m-space-1);font-size:var(--t-small);color:var(--m-muted);line-height:1;opacity:.6;"
+              onmouseenter="this.style.opacity='1';this.style.color='var(--m-danger)'"
+              onmouseleave="this.style.opacity='.6';this.style.color='var(--m-muted)'">✕</button>
+      <!-- Collapse toggle -->
+      <button class="proj-collapse-btn u-fixed btn btn--ghost"
+              onclick="toggleProjectCollapse('{{ p.id }}')"
+              title="Collapse / expand"
+              style="padding:var(--m-space-1) var(--m-space-1);font-family:var(--m-mono);font-size:var(--t-h4);color:var(--m-muted);line-height:1;">−</button>
+      </div><!-- /.proj-metaline -->
+    </div>
+
+    <!-- ── Collapsible body ── -->
+    <div class="proj-body u-col" style="gap:var(--m-space-3);padding:var(--m-space-4) var(--m-space-4) var(--m-space-4);">
+
+      <!-- Description -->
+      {% if p.description %}
+      <div class="ed" style="font-size:var(--t-small);color:var(--m-muted);margin:0;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;">
+        {{ p.description }}
+      </div>
+      {% endif %}
+
+      {#- HOW LONG, not WHEN. "Last session · 2026-06-11" is the same fact, but
+          it asks the reader to subtract dates on sixteen cards to find the ones
+          that have stalled — which is the only question this line exists to
+          answer. An age is comparable at a glance; a date is not.
+
+          MARKED THE OTHER WAY ROUND, and the count decided it. A "dormant" pill
+          at 60 days landed on 11 of 16 cards. The first instinct was to raise
+          the threshold until the page looked calm — but that hides a true thing
+          to satisfy a rule. Most of these projects ARE asleep, and saying so is
+          the most useful sentence on this surface. So dormancy is the quiet
+          default and RECENT WORK earns the mark: 3 of 16 in the last two days,
+          which is rare enough to mean something. Same inversion as read/unread
+          in the Library once everything was marked read.
+
+          This also replaces the sparkline approved on 2026-08-28: there is ONE
+          task event in the last fourteen days, and 58 of the last 100 share the
+          date 2026-08-14 — a bulk write. A chart of that draws a mountain where
+          a migration happened. See routers/work.py. -#}
+      {% if p.quiet_days is none and not p.last_session_at %}
+      <div class="u-label proj-quiet">Never opened</div>
+      {% elif p.quiet_days is none %}
+      <div class="u-label proj-quiet">Last session · {{ p.last_session_at[:10] }}</div>
+      {% elif p.quiet_days <= 2 %}
+      <div class="u-label proj-quiet" title="Last session {{ p.last_session_at[:10] }}">
+        {% if p.quiet_days == 0 %}Touched today{% elif p.quiet_days == 1 %}Touched yesterday{% else %}Touched 2 days ago{% endif %}
+        <span class="stat is-good">active</span>
+      </div>
+      {% else %}
+      <div class="u-label proj-quiet" title="Last session {{ p.last_session_at[:10] }}">
+        Quiet for {{ p.quiet_days }} days
+      </div>
+      {% endif %}
+
+      <!-- Next step -->
+      {% if p.next_step %}
+      <div class="u-label u-label--accent" style="letter-spacing:0.12em;padding:var(--m-space-2) var(--m-space-3);background:var(--m-accent-wash);border-radius:var(--m-radius);">
+        NEXT → {{ p.next_step | clip(120) }}
+      </div>
+      {% endif %}
+
+      {#- WHAT YOU HAVE FILED AGAINST THIS PROJECT. Shown only when something
+          is filed: a "0 kept" line on every card would be a row of noise on
+          nineteen cards, and the absence is not information. -#}
+      {% if p.kept %}
+      <a class="proj-kept" href="/library/shelf/{{ p.kept.slug }}"
+         title="Reading and evidence filed against this project">
+        <b>{{ p.kept.n }}</b> kept for this project &rarr;
+      </a>
+      {% endif %}
+
+      <!-- Task list (lazy-loaded, auto-refreshes every 90 s) -->
+      <div id="proj-tasks-{{ p.id }}"
+           hx-get="/api/partial/work/project-tasks/{{ p.id }}"
+           hx-trigger="intersect once, every 90s"
+           hx-swap="innerHTML"
+           style="min-height:20px;">
+        <div class="u-label">Pulling tasks for this project…</div>
+      </div>
+
+      {#- ONE launch row, the same shape on every card.
+
+          The buttons were already in a fixed order. The problem was that every
+          project has a DIFFERENT SUBSET — RStudio here, VS Code there, GitHub on
+          a third — so the row was a different width on each card and the eye
+          read the raggedness as disorder before it read the content. In a
+          screenshot of eight project cards, no two launch rows lined up.
+
+          Now: one primary, always in the same place, and everything else behind
+          a single overflow. Nothing is removed; the row simply stops changing
+          shape. -#}
+      <div class="u-rule-t proj-rail" style="padding-top:10px;">
+
+        {% set ll = p.launchers_list %}
+        {% set _all = [
+          ('claude_code',   'Claude Code',  'Continue in Claude Code'),
+          ('rstudio',       'RStudio',      'Open in RStudio'),
+          ('vscode',        'VS Code',      'Open in VS Code'),
+          ('claude_chat',   'Chat',         'Open in Claude Chat'),
+          ('claude_cowork', 'Cowork',       'Open in Claude Cowork'),
+          ('explorer',      'Open Folder',  'Open the project folder'),
+          ('dashboard',     'Dashboard',    'Open the project dashboard'),
+          ('github',        'GitHub',       'Open the repository'),
+        ] %}
+        {% set _have = [] %}
+        {% for key, label, hint in _all %}
+          {% if key in ll and not (key == 'explorer' and not p.external_path) %}
+            {% set _ = _have.append((key, label, hint)) %}
+          {% elif key == 'claude_chat' and 'claude_desktop' in ll %}
+            {% set _ = _have.append((key, label, hint)) %}
+          {% endif %}
+        {% endfor %}
+
+        {#- NO FOLDER MEANS NO CONTROL, AND THAT WAS THE WHOLE PROBLEM.
+            `external_path` was never editable after a project was created, so
+            seven active projects had no folder and no way to give them one —
+            while the row cheerfully offered to open it. The ask comes first on
+            the card now, because until it is answered most of the row cannot
+            work. -#}
+        {% if not p.external_path %}
+        <button type="button" class="btn btn--sec btn--caps proj-launch proj-nopath"
+                onclick='projSetPath({{ p.id | tojson }}, {{ (p.title or '') | tojson }})'
+                title="Tell Metis which folder holds this work, and the rest of these can open it">
+          Where does this live?
+        </button>
+        {% endif %}
+
+        {% if _have %}
+          {% set _first = _have[0] %}
+          <button class="btn btn--primary btn--caps proj-launch"
+                  onclick="launchProjectTarget('{{ p.id }}','{{ _first[0] }}')"
+                  title="{{ _first[2] }}">{{ _first[1] }}</button>
+
+          {% if _have | length > 1 %}
+          <details class="proj-more">
+            <summary class="btn btn--sec btn--caps" title="Other ways to open this project">
+              Open in…
+            </summary>
+            <div class="proj-more-menu">
+              {% for key, label, hint in _have[1:] %}
+              <button type="button" class="proj-more-item"
+                      onclick="launchProjectTarget('{{ p.id }}','{{ key }}')"
+                      title="{{ hint }}">{{ label }}</button>
+              {% endfor %}
+              {#- A path that is set can also be wrong. Reachable but quiet:
+                  it belongs with the other ways to open the project, not
+                  competing with them. -#}
+              {% if p.external_path %}
+              <button type="button" class="proj-more-item proj-more-item--alt"
+                      onclick='projSetPath({{ p.id | tojson }}, {{ (p.title or '') | tojson }})'
+                      title="{{ p.external_path }}">Change folder…</button>
+              {% endif %}
+            </div>
+          </details>
+          {% endif %}
+        {% endif %}
+
+        {#- The original control, unchanged. My first version called
+            `refreshProjectCard()`, which does not exist — I invented the name
+            while moving the button and never checked. It would have failed
+            silently on every card, which is exactly the class of bug a
+            screenshot cannot catch either: a button that looks right and does
+            nothing. -#}
+        <button class="btn btn--ghost btn--caps proj-launch u-fixed"
+                style="margin-left:auto;"
+                hx-get="/api/partial/work/project-tasks/{{ p.id }}"
+                hx-target="#proj-tasks-{{ p.id }}"
+                hx-swap="innerHTML"
+                title="Refresh tasks">↻</button>
+      </div>
+
+      <!-- Notes panel (lazy-loaded, hidden by default) -->
+      <div class="u-hide" id="proj-notes-{{ p.id }}"></div>
+
+    </div><!-- /.proj-body -->
+  </div>
+  {% endfor %}
+  </div><!-- /.cat-body -->
+{% if not flat %}</details>{% endif %}
+{% endfor %}
+
+{#- Creating a category has to be possible BEFORE anything is in it, or there is
+    nowhere to move the first project to. That is the whole reason categories
+    stopped being a SELECT DISTINCT over the projects table. -#}
+<button type="button" class="cat-new" onclick="catCreate()">+ New category</button>
+</div>
+<!-- Hidden projects chip -->
+<div id="hidden-projects-zone"
+     hx-get="/api/partial/work/hidden-projects"
+     hx-trigger="load"
+     hx-swap="innerHTML"></div>
+{% endif %}

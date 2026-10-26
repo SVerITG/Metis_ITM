@@ -1,0 +1,814 @@
+{% extends "base.html" %}
+{% block title %}Setup — Metis{% endblock %}
+
+{% block content %}
+<div class="page">
+
+  <div class="page-head">
+    <div>
+      <div class="page-eyebrow">Configuration</div>
+      <h1 class="page-title">
+        {% if first_run %}First-run setup{% else %}Personalise Metis{% endif %}
+      </h1>
+    </div>
+    <div class="page-meta">
+      {% if display_name %}{{ display_name }}{% if domain %} · {{ domain }}{% endif %}{% else %}Not yet configured{% endif %}
+    </div>
+  </div>
+
+  <!-- ===== First-run inline wizard ===== -->
+  {% if first_run %}
+  <div id="setup-wizard" class="card" style="margin-bottom:var(--m-space-5);padding:0;overflow:hidden;">
+
+    <!-- Step indicators -->
+    <div id="wizard-steps" style="display:flex;border-bottom:1px solid var(--m-line);background:var(--m-surface-2);padding:0 var(--m-space-6);">
+      {% for i, label in [('1','About you'),('2','Research'),('3','Working style'),('4','Projects')] %}
+      <div class="wstep" data-step="{{ i }}"
+           style="padding:0.875rem 1.25rem;font-family:var(--m-mono,monospace);font-size:11px;
+                  letter-spacing:0.14em;border-bottom:2px solid transparent;cursor:default;
+                  color:var(--m-muted);{% if i == '1' %}border-color:var(--m-accent);color:var(--m-ink){% endif %}">
+        {{ i }}. {{ label }}
+      </div>
+      {% endfor %}
+    </div>
+
+    <form id="wizard-form" novalidate style="padding:var(--m-space-6);">
+
+      <!-- Step 1: About you -->
+      <div class="wpage" id="wpage-1">
+        <h2 style="margin:0 0 var(--m-space-5);font-size:var(--t-h4);">About you</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--m-space-4);">
+          <div>
+            <label class="field-label">Full name *</label>
+            <input name="name" class="field-input" placeholder="e.g. Jane Smith" required aria-label="e.g. Jane Smith">
+          </div>
+          <div>
+            <label class="field-label">Institution / organisation</label>
+            <input name="institution" class="field-input" placeholder="e.g. University of Global Health" aria-label="e.g. University of Global Health">
+          </div>
+          <div>
+            <label class="field-label">Role / title *</label>
+            <input name="role" class="field-input" placeholder="e.g. Researcher, Epidemiologist, PhD student" required aria-label="e.g. Researcher, Epidemiologist, PhD student">
+          </div>
+          <div>
+            <label class="field-label">Email (optional)</label>
+            <input name="email" class="field-input" type="email" placeholder="used in outputs only" aria-label="used in outputs only">
+          </div>
+          <div>
+            <label class="field-label">Preferred language</label>
+            <input name="language" class="field-input" value="English" aria-label="Preferred language">
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: Research -->
+      <div class="wpage u-hide" id="wpage-2">
+        <h2 style="margin:0 0 var(--m-space-5);font-size:var(--t-h4);">Your research</h2>
+        <div style="display:grid;gap:var(--m-space-4);">
+          <div>
+            <label class="field-label">Primary research field *</label>
+            <input name="field" class="field-input" placeholder="e.g. Infectious disease epidemiology" required aria-label="e.g. Infectious disease epidemiology">
+          </div>
+          <div>
+            <label class="field-label">Key research topics</label>
+            <input name="topics" class="field-input"
+                   placeholder="e.g. malaria, vaccine coverage, health systems, surveillance" aria-label="e.g. malaria, vaccine coverage, health systems, surveillance">
+            <div class="field-hint">Comma-separated — used for literature alerts and search</div>
+          </div>
+          <div>
+            <label class="field-label">Tools and software you use daily</label>
+            <input name="tools" class="field-input" placeholder="e.g. R, Python, SPSS, ArcGIS" aria-label="e.g. R, Python, SPSS, ArcGIS">
+          </div>
+          <div>
+            <label class="field-label">Research methods</label>
+            <input name="methods" class="field-input"
+                   placeholder="e.g. cohort studies, spatial analysis, systematic review" aria-label="e.g. cohort studies, spatial analysis, systematic review">
+          </div>
+          <div>
+            <label class="field-label">What should Metis watch in the news?</label>
+            <input name="news_terms" class="field-input"
+                   placeholder="e.g. WHO guidance, AI in health, outbreak reports" aria-label="e.g. WHO guidance, AI in health, outbreak reports">
+            <div class="field-hint">Comma-separated. Can differ from your field — this drives your news and briefings, not your library</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Working style -->
+      <div class="wpage u-hide" id="wpage-3">
+        <h2 style="margin:0 0 var(--m-space-5);font-size:var(--t-h4);">How you like to work</h2>
+        <div style="display:grid;gap:var(--m-space-5);">
+          <div>
+            <label class="field-label">Feedback style</label>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--m-space-3);margin-top:var(--m-space-2);">
+              {% for val, title, desc in [
+                ('gentle','Supportive','Encouraging, soften critique'),
+                ('direct','Direct','Honest and clear, skip padding'),
+                ('blunt','Blunt','No hedging, challenge everything')
+              ] %}
+              <label style="border:1px solid var(--m-line);border-radius:6px;padding:0.875rem;cursor:pointer;transition:border-color 0.15s;"
+                     onmouseover="this.style.borderColor='var(--m-accent)'"
+                     onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--m-line)'">
+                <input type="radio" name="feedback_style" value="{{ val }}"
+                       {% if val == 'direct' %}checked{% endif %}
+                       onchange="document.querySelectorAll('[name=feedback_style]').forEach(r=>{r.parentElement.style.borderColor=r.checked?'var(--m-accent)':'var(--m-line)'})">
+                <div style="font-weight:500;margin:0.375rem 0 0.25rem;font-size:var(--t-body);">{{ title }}</div>
+                <div style="font-size:var(--t-meta);color:var(--m-muted);">{{ desc }}</div>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+          <div>
+            <label class="field-label">Challenge level</label>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--m-space-3);margin-top:var(--m-space-2);">
+              {% for val, title, desc in [
+                ('supportive','Supportive','Help me execute my plans'),
+                ('balanced','Balanced','Push back when something looks off'),
+                ('socratic','Socratic','Question my assumptions proactively')
+              ] %}
+              <label style="border:1px solid var(--m-line);border-radius:6px;padding:0.875rem;cursor:pointer;transition:border-color 0.15s;"
+                     onmouseover="this.style.borderColor='var(--m-accent)'"
+                     onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--m-line)'">
+                <input type="radio" name="challenge_level" value="{{ val }}"
+                       {% if val == 'balanced' %}checked{% endif %}
+                       onchange="document.querySelectorAll('[name=challenge_level]').forEach(r=>{r.parentElement.style.borderColor=r.checked?'var(--m-accent)':'var(--m-line)'})">
+                <div style="font-weight:500;margin:0.375rem 0 0.25rem;font-size:var(--t-body);">{{ title }}</div>
+                <div style="font-size:var(--t-meta);color:var(--m-muted);">{{ desc }}</div>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+          <div>
+            <label class="field-label">Output length preference</label>
+            <select name="output_length" class="field-input" style="width:auto;">
+              <option value="concise">Concise — get to the point</option>
+              <option value="moderate">Moderate — some context, then answer</option>
+              <option value="detailed">Detailed — full explanation</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label">What are you trying to accomplish in the next 3 months?</label>
+            <textarea name="short_term_goals" class="field-input" rows="2"
+                      placeholder="e.g. Submit a manuscript, complete field data collection, finish literature review"></textarea>
+          </div>
+          <div>
+            <label class="field-label">What are your main challenges right now?</label>
+            <textarea name="challenges" class="field-input" rows="2"
+                      placeholder="e.g. Sample size limitations, missing data, writing block"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: Projects -->
+      <div class="wpage u-hide" id="wpage-4">
+        <h2 style="margin:0 0 var(--m-space-1);font-size:var(--t-h4);">Your active projects</h2>
+        <p style="color:var(--m-muted);font-size:var(--t-body);margin:0 0 var(--m-space-5);line-height:1.6;">
+          Tell Metis what you're working on. For each project it will create a tracking record,
+          write context into the project folder so Claude understands it immediately,
+          and register it in Claude Desktop. You can add as many as you like — more can be added after setup too.
+        </p>
+
+        <!-- Project cards list -->
+        <div class="u-col" id="project-cards" style="gap:var(--m-space-3);margin-bottom:var(--m-space-4);">
+          <!-- cards injected by JS -->
+        </div>
+
+        <!-- Add Project button -->
+        <button class="u-row" type="button" onclick="openProjectModal()"
+                style="width:100%;padding:0.875rem;background:transparent;border:2px dashed var(--m-line);border-radius:8px;cursor:pointer;font-family:var(--m-mono,monospace);font-size:var(--t-micro);letter-spacing:0.14em;color:var(--m-muted);transition:all 0.15s;justify-content:center;gap:var(--m-space-2);"
+                onmouseover="this.style.borderColor='var(--m-accent)';this.style.color='var(--m-accent)'"
+                onmouseout="this.style.borderColor='var(--m-line)';this.style.color='var(--m-muted)'">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/>
+          </svg>
+          ADD A PROJECT
+        </button>
+
+        <div style="margin-top:var(--m-space-3);padding:var(--m-space-3);background:var(--m-surface-2);border-radius:6px;font-size:var(--t-meta);color:var(--m-muted);line-height:1.5;">
+          💡 <strong>Tip:</strong> To find a folder path in Windows Explorer, right-click the folder and choose
+          <em>Copy as path</em>. Paste it in the folder field below.
+        </div>
+
+        <!-- Processing indicator -->
+        <div class="u-hide" id="wizard-processing" style="margin-top:var(--m-space-5);padding:var(--m-space-5);background:linear-gradient(135deg,rgba(22,163,74,0.04),rgba(22,163,74,0.08));border:1px solid rgba(22,163,74,0.2);border-radius:8px;text-align:center;">
+          <div style="font-family:var(--m-mono,monospace);font-size:var(--t-micro);letter-spacing:0.2em;color:var(--m-accent);margin-bottom:var(--m-space-3);">CALIBRATING METIS</div>
+          <div style="font-size:var(--t-body);font-weight:500;margin-bottom:0.375rem;">
+            Building your personalised profile…
+          </div>
+          <div style="color:var(--m-muted);font-size:var(--t-meta);line-height:1.5;">
+            Claude is reading your answers and generating a calibrated persona —
+            tuned to your domain, your working style, and your projects.
+            This takes about 15 seconds.
+          </div>
+        </div>
+
+        <div class="u-hide" id="wizard-error" style="margin-top:var(--m-space-4);padding:0.875rem;background:var(--m-alert-wash);border:1px solid color-mix(in srgb, var(--m-alert) 35%, transparent);border-radius:6px;color:var(--m-alert);font-size:var(--t-body);"></div>
+      </div>
+
+      <!-- ── Project modal ──────────────────────────────────────────────── -->
+      <div class="u-hide" id="project-modal" style="position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.5);backdrop-filter:blur(2px);align-items:center;justify-content:center;padding:var(--m-space-5);">
+        <div style="background:var(--m-surface);border-radius:10px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.2);">
+
+          <!-- Modal header -->
+          <div class="u-row u-row--between" style="padding:var(--m-space-5) var(--m-space-5) var(--m-space-4);border-bottom:1px solid var(--m-line);">
+            <div>
+              <div style="font-family:var(--m-mono,monospace);font-size:var(--t-micro);letter-spacing:0.2em;color:var(--m-accent);margin-bottom:var(--m-space-1);">NEW PROJECT</div>
+              <h3 style="margin:0;font-size:var(--t-h4);">Add a project to Metis</h3>
+            </div>
+            <button class="btn btn--ghost" onclick="closeProjectModal()" type="button"
+                    style="color:var(--m-muted);font-size:var(--t-h3);line-height:1;padding:var(--m-space-1);">×</button>
+          </div>
+
+          <!-- Modal body -->
+          <div class="u-col" style="padding:var(--m-space-5);gap:var(--m-space-4);">
+
+            <!-- Name -->
+            <div>
+              <label class="field-label">Project name *</label>
+              <input id="modal-name" class="field-input" placeholder="e.g. Malaria prevalence survey, Hypertension cohort study" aria-label="e.g. Malaria prevalence survey, Hypertension cohort study">
+            </div>
+
+            <!-- Category + Priority row -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.875rem;">
+              <div>
+                <label class="field-label">Category</label>
+                <div style="display:flex;gap:var(--m-space-2);">
+                  <select id="modal-category" class="field-input u-grow">
+                    <option value="Article">Article</option>
+                    <option value="Grant">Grant</option>
+                    <option value="Teaching">Teaching</option>
+                    <option value="Software">Software</option>
+                    <option value="Review">Review</option>
+                    <option value="__new__">+ New category…</option>
+                  </select>
+                </div>
+                <input id="modal-new-cat" class="field-input u-hide" placeholder="New category name"
+                       style="margin-top:0.375rem;" aria-label="New category name">
+              </div>
+              <div>
+                <label class="field-label">Priority</label>
+                <select id="modal-priority" class="field-input">
+                  <option value="high">🔴 Main work — top priority</option>
+                  <option value="medium" selected>🟡 Active — regular attention</option>
+                  <option value="low">🟢 Side project — occasional</option>
+                  <option value="someday">⚪ Exploring — no deadline</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Folder path -->
+            <div>
+              <label class="field-label">Project folder on your computer (optional)</label>
+              <div style="display:flex;gap:var(--m-space-2);">
+                <input id="modal-folder" class="field-input u-grow"
+                       placeholder="e.g. C:\Users\you\Documents\malaria-study" aria-label="e.g. C:\Users\you\Documents\malaria-study">
+                <button class="u-tile" type="button" onclick="pickFolder()"
+                        style="padding:0.5rem 0.875rem;cursor:pointer;font-size:var(--t-body);white-space:nowrap;color:var(--m-ink);" title="Browse for folder">
+                  📂 Browse
+                </button>
+              </div>
+              <div class="field-hint">
+                Metis will write a <code>CLAUDE.md</code> here so Claude understands the project.
+                In Windows Explorer: right-click the folder → <em>Copy as path</em>, then paste above.
+              </div>
+              <!-- Hidden folder picker -->
+              <input class="u-hide" type="file" id="folder-picker" aria-label="Choose a folder" webkitdirectory
+                     onchange="handleFolderPick(this)">
+            </div>
+
+            <!-- Scan type -->
+            <div>
+              <label class="field-label">How should Metis understand this project?</label>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--m-space-2);margin-top:0.375rem;">
+                <label id="scan-label-names" class="scan-opt"
+                       style="border:1px solid var(--m-accent);border-radius:6px;padding:var(--m-space-2);cursor:pointer;text-align:center;">
+                  <input class="u-hide" type="radio" name="modal-scan" value="names" checked>
+                  <div style="font-size:var(--t-h4);margin-bottom:0.2rem;">🗂️</div>
+                  <div style="font-weight:500;font-size:var(--t-small);">File names</div>
+                  <div style="color:var(--m-muted);font-size:var(--t-meta);">Quick scan</div>
+                </label>
+                <label id="scan-label-content" class="scan-opt"
+                       style="border:1px solid var(--m-line);border-radius:6px;padding:var(--m-space-2);cursor:pointer;text-align:center;">
+                  <input class="u-hide" type="radio" name="modal-scan" value="content">
+                  <div style="font-size:var(--t-h4);margin-bottom:0.2rem;">📄</div>
+                  <div style="font-weight:500;font-size:var(--t-small);">Read notes</div>
+                  <div style="color:var(--m-muted);font-size:var(--t-meta);">Reads README</div>
+                </label>
+                <label id="scan-label-none" class="scan-opt"
+                       style="border:1px solid var(--m-line);border-radius:6px;padding:var(--m-space-2);cursor:pointer;text-align:center;">
+                  <input class="u-hide" type="radio" name="modal-scan" value="none">
+                  <div style="font-size:var(--t-h4);margin-bottom:0.2rem;">✏️</div>
+                  <div style="font-weight:500;font-size:var(--t-small);">I'll describe</div>
+                  <div style="color:var(--m-muted);font-size:var(--t-meta);">Type it below</div>
+                </label>
+              </div>
+            </div>
+
+            <!-- Description (shown when scan=none or always optional) -->
+            <div id="modal-desc-wrap">
+              <label class="field-label">Brief description <span id="desc-hint" style="font-weight:400;color:var(--m-muted);">(optional — Metis will auto-detect if a folder is set)</span></label>
+              <textarea id="modal-desc" class="field-input" rows="2"
+                        placeholder="e.g. Longitudinal cohort study examining hypertension control rates across three districts"></textarea>
+            </div>
+
+          </div>
+
+          <!-- Modal footer -->
+          <div style="padding:var(--m-space-4) var(--m-space-5) var(--m-space-5);display:flex;justify-content:flex-end;gap:var(--m-space-3);border-top:1px solid var(--m-line);">
+            <button class="btn btn--sec" type="button" onclick="closeProjectModal()"
+                    style="padding:var(--m-space-2) var(--m-space-5);font-family:var(--m-mono,monospace);font-size:var(--t-micro);letter-spacing:0.12em;">
+              CANCEL
+            </button>
+            <button class="btn btn--primary" type="button" onclick="saveProject()"
+                    style="padding:var(--m-space-2) var(--m-space-5);color:white;border:none;font-family:var(--m-mono,monospace);font-size:var(--t-micro);letter-spacing:0.12em;">
+              ADD PROJECT →
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Nav buttons -->
+      <div style="display:flex;justify-content:space-between;margin-top:var(--m-space-6);padding-top:1.25rem;border-top:1px solid var(--m-line);">
+        <button class="u-hide btn btn--sec" type="button" id="btn-back" onclick="wizardStep(-1)"
+                style="padding:var(--m-space-2) var(--m-space-5);font-family:var(--m-mono,monospace);font-size:var(--t-micro);letter-spacing:0.12em;">
+          ← BACK
+        </button>
+        <div class="u-grow"></div>
+        <button class="btn btn--primary" type="button" id="btn-next" onclick="wizardStep(1)"
+                style="color:white;border:none;padding:var(--m-space-2) var(--m-space-5);font-family:var(--m-mono,monospace);font-size:var(--t-micro);letter-spacing:0.12em;">
+          NEXT →
+        </button>
+        <button class="u-hide btn btn--primary" type="submit" id="btn-submit" style="color:white;border:none;padding:var(--m-space-2) var(--m-space-5);font-family:var(--m-mono,monospace);font-size:var(--t-micro);letter-spacing:0.12em;">
+          FINISH SETUP →
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <style>
+    .field-label { display:block;font-family:var(--m-mono,monospace);font-size:11px;
+                   letter-spacing:0.14em;color:var(--m-muted);margin-bottom:0.4rem; }
+    .field-input { width:100%;border:1px solid var(--m-line);border-radius:4px;
+                   padding:0.5rem 0.75rem;font-size:0.875rem;box-sizing:border-box;
+                   background:var(--m-surface);color:var(--m-ink);
+                   font-family:inherit; }
+    .field-input:focus { border-color:var(--m-accent); }
+    .field-hint { font-size:0.78rem;color:var(--m-muted);margin-top:0.25rem; }
+    textarea.field-input { resize:vertical; }
+  </style>
+
+  <script>
+    var _step = 1;
+    var _total = 4;
+
+    function wizardStep(dir) {
+      // Validate required fields on current page before advancing
+      if (dir > 0) {
+        var page = document.getElementById('wpage-' + _step);
+        var required = page.querySelectorAll('[required]');
+        for (var i = 0; i < required.length; i++) {
+          if (!required[i].value.trim()) {
+            required[i].focus();
+            required[i].style.borderColor = 'var(--m-alert)';
+            return;
+          }
+        }
+      }
+
+      _step = Math.max(1, Math.min(_total, _step + dir));
+
+      document.querySelectorAll('.wpage').forEach(function(p) { p.style.display = 'none'; });
+      document.getElementById('wpage-' + _step).style.display = '';
+
+      document.querySelectorAll('.wstep').forEach(function(s) {
+        var active = s.dataset.step == _step;
+        s.style.borderBottomColor = active ? 'var(--m-accent)' : 'transparent';
+        s.style.color = active ? 'var(--m-ink)' : 'var(--m-muted)';
+      });
+
+      document.getElementById('btn-back').style.display = _step > 1 ? '' : 'none';
+      document.getElementById('btn-next').style.display = _step < _total ? '' : 'none';
+      document.getElementById('btn-submit').style.display = _step === _total ? '' : 'none';
+
+      if (_step === _total) {
+        renderProjectCards();
+      }
+    }
+
+    // ── Project modal ─────────────────────────────────────────────────────────
+    var _projects = [];
+    var _editIndex = -1;
+
+    function openProjectModal(editIdx) {
+      _editIndex = (editIdx !== undefined) ? editIdx : -1;
+      var modal = document.getElementById('project-modal');
+      modal.style.display = 'flex';
+      // Reset / pre-fill
+      if (_editIndex >= 0) {
+        var p = _projects[_editIndex];
+        document.getElementById('modal-name').value     = p.name || '';
+        document.getElementById('modal-folder').value   = p.folder || '';
+        document.getElementById('modal-desc').value     = p.description || '';
+        document.getElementById('modal-priority').value = p.priority || 'medium';
+        // Category
+        var catSel = document.getElementById('modal-category');
+        var found = false;
+        for (var i = 0; i < catSel.options.length; i++) {
+          if (catSel.options[i].value === p.category) { catSel.selectedIndex = i; found = true; break; }
+        }
+        if (!found && p.category) {
+          var opt = new Option(p.category, p.category);
+          catSel.insertBefore(opt, catSel.querySelector('[value="__new__"]'));
+          catSel.value = p.category;
+        }
+        // Scan type
+        var scanVal = p.scan_type || 'names';
+        document.querySelectorAll('[name="modal-scan"]').forEach(function(r) { r.checked = r.value === scanVal; });
+        updateScanHighlight(scanVal);
+      } else {
+        document.getElementById('modal-name').value     = '';
+        document.getElementById('modal-folder').value   = '';
+        document.getElementById('modal-desc').value     = '';
+        document.getElementById('modal-priority').value = 'medium';
+        document.getElementById('modal-category').value = 'Article';
+        document.getElementById('modal-new-cat').style.display = 'none';
+        document.querySelectorAll('[name="modal-scan"]').forEach(function(r) { r.checked = r.value === 'names'; });
+        updateScanHighlight('names');
+      }
+      setTimeout(function() { document.getElementById('modal-name').focus(); }, 100);
+    }
+
+    function closeProjectModal() {
+      document.getElementById('project-modal').style.display = 'none';
+    }
+
+    function updateScanHighlight(val) {
+      ['names','content','none'].forEach(function(v) {
+        var el = document.getElementById('scan-label-' + v);
+        if (el) el.style.borderColor = (v === val) ? 'var(--m-accent)' : 'var(--m-line)';
+      });
+      var descHint = document.getElementById('desc-hint');
+      if (descHint) descHint.textContent = val === 'none' ? '(required — describe what this project is about)' : '(optional — Metis will auto-detect if a folder is set)';
+    }
+
+    document.addEventListener('change', function(e) {
+      if (e.target.name === 'modal-scan') updateScanHighlight(e.target.value);
+      if (e.target.id === 'modal-category') {
+        var newCatInput = document.getElementById('modal-new-cat');
+        if (e.target.value === '__new__') {
+          newCatInput.style.display = '';
+          newCatInput.focus();
+        } else {
+          newCatInput.style.display = 'none';
+        }
+      }
+    });
+
+    function pickFolder() {
+      var picker = document.getElementById('folder-picker');
+      if (picker) picker.click();
+    }
+
+    function handleFolderPick(input) {
+      if (input.files && input.files.length > 0) {
+        // Extract directory path from the first file's webkitRelativePath
+        var rel = input.files[0].webkitRelativePath;
+        // The folder name is the first component — we can't get full OS path from browser security
+        var folderName = rel.split('/')[0];
+        document.getElementById('modal-folder').value = folderName;
+        document.getElementById('modal-folder').title = 'Folder selected: ' + folderName + ' (paste the full path for best results)';
+      }
+    }
+
+    function saveProject() {
+      var name = (document.getElementById('modal-name').value || '').trim();
+      if (!name) {
+        document.getElementById('modal-name').focus();
+        document.getElementById('modal-name').style.borderColor = 'var(--m-alert)';
+        return;
+      }
+      document.getElementById('modal-name').style.borderColor = '';
+
+      var catSel = document.getElementById('modal-category');
+      var newCatInput = document.getElementById('modal-new-cat');
+      var category = catSel.value === '__new__'
+        ? (newCatInput.value.trim() || 'Other')
+        : catSel.value;
+
+      // Add new category to select if created
+      if (catSel.value === '__new__' && newCatInput.value.trim()) {
+        var opt = new Option(category, category);
+        catSel.insertBefore(opt, catSel.querySelector('[value="__new__"]'));
+        catSel.value = category;
+        newCatInput.value = '';
+        newCatInput.style.display = 'none';
+      }
+
+      var scanType = 'names';
+      document.querySelectorAll('[name="modal-scan"]').forEach(function(r) { if (r.checked) scanType = r.value; });
+
+      var project = {
+        name:        name,
+        category:    category,
+        folder:      (document.getElementById('modal-folder').value || '').trim(),
+        description: (document.getElementById('modal-desc').value || '').trim(),
+        priority:    document.getElementById('modal-priority').value || 'medium',
+        scan_type:   scanType,
+      };
+
+      if (_editIndex >= 0) {
+        _projects[_editIndex] = project;
+      } else {
+        _projects.push(project);
+      }
+
+      renderProjectCards();
+      closeProjectModal();
+    }
+
+    var _priorityLabels = {
+      high: '🔴 Main work', medium: '🟡 Active', low: '🟢 Side project', someday: '⚪ Exploring'
+    };
+
+    function renderProjectCards() {
+      var container = document.getElementById('project-cards');
+      if (!container) return;
+      container.innerHTML = '';
+      _projects.forEach(function(p, idx) {
+        var card = document.createElement('div');
+        card.style.cssText = 'border:1px solid var(--m-line);border-radius:8px;padding:0.875rem 1rem;' +
+          'display:flex;align-items:flex-start;gap:0.875rem;background:var(--m-surface);';
+        card.innerHTML =
+          '<div class="u-fixed" style="width:36px;height:36px;border-radius:6px;background:var(--m-surface-2);' +
+          '     display:flex;align-items:center;justify-content:center;font-size:var(--t-h4);">' +
+          (p.category === 'Article' ? '📄' : p.category === 'Grant' ? '💰' : p.category === 'Teaching' ? '📚' :
+           p.category === 'Software' ? '💻' : p.category === 'Review' ? '🔍' : '📁') +
+          '</div>' +
+          '<div class="u-grow">' +
+            '<div style="font-weight:500;font-size:var(--t-body);margin-bottom:0.2rem;">' + _escHtml(p.name) + '</div>' +
+            '<div style="font-size:var(--t-meta);color:var(--m-muted);display:flex;gap:var(--m-space-3);flex-wrap:wrap;">' +
+              '<span>' + _escHtml(p.category) + '</span>' +
+              '<span>' + (_priorityLabels[p.priority] || p.priority) + '</span>' +
+              (p.folder ? '<span class="u-truncate" style="font-family:monospace;max-width:200px;" title="' + _escHtml(p.folder) + '">📂 ' + _escHtml(p.folder.split(/[/\\]/).pop()) + '</span>' : '') +
+            '</div>' +
+            (p.description ? '<div class="u-truncate" style="font-size:var(--t-meta);color:var(--m-muted);margin-top:var(--m-space-1);">' + _escHtml(p.description) + '</div>' : '') +
+          '</div>' +
+          '<div class="u-fixed" style="display:flex;gap:0.375rem;">' +
+            '<button class="btn btn--sec" type="button" onclick="openProjectModal(' + idx + ')" ' +
+            '        style="padding:var(--m-space-1) var(--m-space-2);' +
+            '               border-radius:4px;font-size:var(--t-meta);color:var(--m-muted);">Edit</button>' +
+            '<button class="btn btn--sec" type="button" onclick="_projects.splice(' + idx + ',1);renderProjectCards()" ' +
+            '        style="padding:var(--m-space-1) var(--m-space-2);' +
+            '               border-radius:4px;font-size:var(--t-meta);color:var(--m-alert);">×</button>' +
+          '</div>';
+        container.appendChild(card);
+      });
+    }
+
+    function _escHtml(str) {
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Close modal on backdrop click
+    document.getElementById('project-modal').addEventListener('click', function(e) {
+      if (e.target === this) closeProjectModal();
+    });
+
+    // Legacy addProject kept for compatibility — now opens modal
+    function addProject() { openProjectModal(); }
+
+    document.getElementById('wizard-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      var data = {};
+      var fd = new FormData(e.target);
+      fd.forEach(function(v, k) { data[k] = v; });
+
+      // Collect structured project data from _projects array
+      data['projects'] = _projects;
+      // scan_type is per-project; use 'names' as global default for any without explicit type
+      data['scan_type'] = 'names';
+
+      document.getElementById('wizard-processing').style.display = '';
+      document.getElementById('wizard-error').style.display = 'none';
+      document.getElementById('btn-submit').disabled = true;
+
+      try {
+        var resp = await fetch('/api/setup/configure', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(data),
+        });
+        var result = await resp.json();
+
+        if (result.ok) {
+          // Keystone P1.3 — don't just claim success. Verify Metis actually works
+          // on THIS computer (DB, tools, search model, profile) and show the result.
+          var pe = document.getElementById('wizard-processing');
+          if (pe) { pe.innerHTML = '<div style="text-align:center;color:var(--m-muted);">Verifying Metis on your computer…</div>'; }
+          try {
+            var vres = await (await fetch('/api/setup/verify')).json();
+            var rows = (vres.checks || []).map(function (c) {
+              var mark = c.ok ? '✓' : '✗';
+              var color = c.ok ? 'var(--m-ok)' : (c.critical ? 'var(--m-alert)' : 'var(--m-warn)');
+              return '<div style="display:flex;align-items:baseline;gap:var(--m-space-2);padding:var(--m-space-1) 0;">' +
+                '<span style="color:' + color + ';font-weight:600;width:1rem;">' + mark + '</span>' +
+                '<span>' + c.name + (c.detail ? ' <span style="color:var(--m-muted);font-size:var(--t-meta);">— ' + c.detail + '</span>' : '') + '</span></div>';
+            }).join('');
+            var allGood = !!vres.ok;
+            document.getElementById('setup-wizard').innerHTML =
+              '<div style="padding:var(--m-space-6);max-width:540px;margin:0 auto;text-align:center;">' +
+              '<div style="font-size:var(--t-h1);margin-bottom:var(--m-space-2);">' + (allGood ? '✓' : '⚠') + '</div>' +
+              '<div style="font-size:var(--t-h4);font-weight:500;margin-bottom:var(--m-space-1);">' +
+                (allGood ? 'Metis is configured and working.' : 'Metis is configured — a few things need attention.') + '</div>' +
+              (result.ai_used
+                ? '<div style="color:var(--m-muted);font-size:var(--t-small);margin-bottom:var(--m-space-4);">Your profile was generated by Claude.</div>'
+                : '<div style="color:var(--m-muted);font-size:var(--t-small);margin-bottom:var(--m-space-4);">' + (result.warning || 'Basic config written.') + '</div>') +
+              '<div style="text-align:left;background:var(--m-surface-2);border:1px solid var(--m-rule-soft);border-radius:6px;padding:0.9rem 1.1rem;margin-bottom:var(--m-space-4);">' + rows + '</div>' +
+              (allGood
+                ? '<div style="font-size:var(--t-small);color:var(--m-muted);">Open Claude in this folder — Metis is ready. Fine-tune with <code>/metis_config</code>.</div>'
+                : '<div style="font-size:var(--t-small);color:var(--m-muted);">The items marked ✗ need attention. ' +
+                  '<button onclick="window.location.reload()" class="btn btn--ghost" style="margin-left:0.4rem;">Re-check</button></div>') +
+              '</div>';
+            if (allGood) { setTimeout(function () { window.location.reload(); }, 4000); }
+          } catch (e) {
+            // Verify endpoint unreachable — fall back to a plain success rather than block.
+            document.getElementById('setup-wizard').innerHTML =
+              '<div style="padding:var(--m-space-7);text-align:center;"><div style="font-size:var(--t-h1);">✓</div>' +
+              '<div style="font-size:var(--t-h4);font-weight:500;">Metis is configured.</div>' +
+              '<div style="color:var(--m-muted);font-size:var(--t-body);margin-top:var(--m-space-2);">Open Claude in this folder — Metis is ready.</div></div>';
+            setTimeout(function () { window.location.reload(); }, 3000);
+          }
+        } else {
+          document.getElementById('wizard-processing').style.display = 'none';
+          document.getElementById('wizard-error').style.display = '';
+          document.getElementById('wizard-error').textContent = 'Error: ' + (result.error || 'Unknown error');
+          document.getElementById('btn-submit').disabled = false;
+        }
+      } catch (err) {
+        document.getElementById('wizard-processing').style.display = 'none';
+        document.getElementById('wizard-error').style.display = '';
+        document.getElementById('wizard-error').textContent = 'Network error — is the dashboard still running?';
+        document.getElementById('btn-submit').disabled = false;
+      }
+    });
+
+    // Initialise
+    wizardStep(0);
+  </script>
+
+  {% elif not has_config %}
+  <div class="card" style="background:var(--m-info-wash);border:1px solid var(--m-info);margin-bottom:var(--m-space-5);">
+    <strong>Not configured yet.</strong> Click <em>Re-run wizard</em> below and then open Claude to begin.
+  </div>
+  {% else %}
+  <div class="card" style="background:var(--m-ok-wash);border:1px solid var(--m-ok);margin-bottom:var(--m-space-5);">
+    <div class="u-row" style="gap:var(--m-space-3);">
+      <span style="font-size:var(--t-h2);">✓</span>
+      <div>
+        <strong>Metis is configured.</strong>
+        {% if display_name %}Welcome, {{ display_name }}.{% endif %}
+        You can re-run any section below or re-trigger the full wizard.
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ===== Wizard sections checklist ===== -->
+  <div class="card" style="margin-bottom:var(--m-space-5);">
+    <h2 class="section-label" style="margin-bottom:var(--m-space-4);">Wizard sections</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--m-space-2);">
+      {% for name, done in sections %}
+      <div class="u-row" style="gap:var(--m-space-2);padding:var(--m-space-2) var(--m-space-3);border-radius:8px;background:var(--m-surface-2);">
+        <span style="font-size:1rem;{% if done %}color:var(--m-ok){% else %}color:var(--m-muted){% endif %}">
+          {% if done %}✓{% else %}○{% endif %}
+        </span>
+        <span style="{% if done %}color:var(--m-ink){% else %}color:var(--m-muted){% endif %}">{{ name }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ===== Actions ===== -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--m-space-4);margin-bottom:var(--m-space-6);">
+
+    <!-- Adapt Metis to my work (Keystone P1.5) — opens Claude with a prompt that
+         drives the existing detect_projects / connect_project_folder /
+         scan_project_scripts tools over the user's real folders, then writes back. -->
+    {%- set adapt_prompt -%}
+Adapt Metis to my existing work. Using the metis-rc tools: run detect_projects to find my research and code folders; for each real one, connect it with connect_project_folder and scan its scripts with scan_project_scripts to build a data dictionary; record each as a project and update my profile topics to match what you find. Then show me a summary of the projects and topics you added — and ask me before adding anything you're unsure about.
+    {%- endset -%}
+    <div class="card">
+      <h3 style="margin:0 0 var(--m-space-2);">✦ Adapt Metis to my work</h3>
+      <p style="color:var(--m-muted);font-size:var(--t-body);margin:0 0 var(--m-space-4);">
+        Let Metis scan your existing folders, projects and code and configure itself
+        to what you're actually working on. Opens Claude Desktop — no API tokens.
+      </p>
+      <a href="claude://claude.ai/new?q={{ adapt_prompt | trim | urlencode }}"
+         class="btn btn--primary" style="text-decoration:none;">Scan my work with Claude</a>
+    </div>
+
+    <!-- Re-run full wizard -->
+    <div class="card">
+      <h3 style="margin:0 0 var(--m-space-2);">Re-run full wizard</h3>
+      <p style="color:var(--m-muted);font-size:var(--t-body);margin:0 0 var(--m-space-4);">
+        Resets the wizard marker. Open Claude after clicking this and the wizard will restart.
+      </p>
+      <button class="btn btn--primary" onclick="resetWizard()">Re-run wizard in Claude</button>
+    </div>
+
+    <!-- Reconfigure a section -->
+    <div class="card">
+      <h3 style="margin:0 0 var(--m-space-2);">Reconfigure a section</h3>
+      <p style="color:var(--m-muted);font-size:var(--t-body);margin:0 0 var(--m-space-4);">
+        In Claude, type: <code>/metis-config</code> followed by the section name.
+        <br>Example: <code>/metis-config news</code>
+      </p>
+      <code style="background:var(--m-surface-2);padding:0.4rem 0.75rem;border-radius:6px;font-size:var(--t-body);">/metis-config [section]</code>
+    </div>
+
+    <!-- Claude Project setup -->
+    <div class="card">
+      <h3 style="margin:0 0 var(--m-space-2);">Run in claude.ai Projects</h3>
+      <p style="color:var(--m-muted);font-size:var(--t-body);margin:0 0 var(--m-space-4);">
+        Create a Claude Project on claude.ai and paste these instructions as the system prompt.
+        The wizard will run in the browser — no install needed.
+      </p>
+      <button class="btn btn--sec" onclick="copyProjectInstructions()">Copy project instructions</button>
+    </div>
+
+  </div>
+
+  <!-- ===== How the wizard works ===== -->
+  <div class="card">
+    <h2 class="section-label" style="margin-bottom:var(--m-space-4);">How the wizard works</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--m-space-4);">
+      <div>
+        <div style="font-weight:600;margin-bottom:var(--m-space-1);">1. Opens in Claude</div>
+        <div style="color:var(--m-muted);font-size:var(--t-body);">The wizard runs as a conversation in Claude Desktop or Claude Code — no web forms, no config files to edit.</div>
+      </div>
+      <div>
+        <div style="font-weight:600;margin-bottom:var(--m-space-1);">2. Asks 13 questions</div>
+        <div style="color:var(--m-muted);font-size:var(--t-body);">Your domain, interests, projects, news topics, tools, working style, data sensitivity. About 10 minutes.</div>
+      </div>
+      <div>
+        <div style="font-weight:600;margin-bottom:var(--m-space-1);">3. Configures everything</div>
+        <div style="color:var(--m-muted);font-size:var(--t-body);">Writes your profile to <code>user-config.yaml</code> and <code>user-preferences.json</code> locally. Nothing is sent to the internet.</div>
+      </div>
+      <div>
+        <div style="font-weight:600;margin-bottom:var(--m-space-1);">4. Personalisation grows</div>
+        <div style="color:var(--m-muted);font-size:var(--t-body);">Every agent run adds to your profile. The longer you use Metis, the better every response gets.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+async function resetWizard() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = "Setting up…";
+  try {
+    const r = await fetch("/api/setup/reset-wizard", {method:"POST"});
+    const d = await r.json();
+    if (d.ok) {
+      btn.textContent = "Done — open Claude now";
+      btn.style.background = "var(--m-ok)";
+      showToast("Wizard reset. Open Claude Desktop to start setup.");
+    } else {
+      btn.textContent = "Re-run wizard in Claude";
+      btn.disabled = false;
+    }
+  } catch(e) {
+    btn.textContent = "Re-run wizard in Claude";
+    btn.disabled = false;
+    showToast("I couldn't reset wizard — is the dashboard running?", "error");
+  }
+}
+
+async function copyProjectInstructions() {
+  try {
+    const r = await fetch("/api/setup/project-instructions");
+    const text = await r.text();
+    await navigator.clipboard.writeText(text);
+    showToast("Claude Project instructions copied to clipboard.");
+  } catch(e) {
+    showToast("I couldn't copy — check browser clipboard permissions.", "error");
+  }
+}
+
+function showToast(msg, type="success") {
+  const t = document.createElement("div");
+  t.textContent = msg;
+  t.style.cssText = `
+    position:fixed;bottom:1.5rem;right:1.5rem;
+    background:${type==="error"?"var(--m-alert)":"var(--m-ok)"};color:var(--m-on-accent);
+    padding:0.75rem 1.25rem;border-radius:8px;font-size:0.9rem;
+    box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:9999;
+    animation:slideUp .2s ease;
+  `;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,323 @@
+{# today_morning_brief.html — Archive morning briefing.
+   Collapsible · mark-as-read (so a re-shown cached brief is clearly "already read")
+   · access to every past brief. Context: brief, brief_date_label, brief_date,
+   brief_id, brief_read, sources, fallback_headlines, open_threads, time_of_day,
+   brief_mode, period #}
+{% from "partials/_update_menu.html" import update_menu %}
+{% set period = period|default('daily') %}
+{% set pending = pending|default(false) %}
+{% set brief_error = brief_error|default('') %}
+{# A brief you have already read starts folded. The collapse machinery was
+   already here and `collapsed` was hardcoded false, so a read brief still put
+   ~460 words between the reader and everything below it — the single largest
+   visible panel on the surface (audit 2026-08-25).
+
+   This does not touch the read SIGNAL: the explicit click stays the only thing
+   that marks a brief read (the researcher's standing decision, 2026-08-21,
+   reaffirming 2026-08-19). It only changes what a brief looks like afterwards. #}
+{% set collapsed = brief_read|default(false) %}
+<div class="panel panel-pad u-mb-6" id="morning-brief" style="padding:var(--m-space-6) var(--m-space-7);">
+
+  {# Header: label · date · read badge · daily/weekly · collapse chevron #}
+  <h2 class="kicker kicker--accent u-row u-row--wrap" style="gap:var(--m-space-3);">
+    <span class="m-brief-toggle" onclick="toggleBrief()" style="display:inline-flex;align-items:center;gap:var(--m-space-2);cursor:pointer;user-select:none;" role="button" tabindex="0">
+      <span id="brief-chevron" style="font-family:var(--m-mono);font-size:18px;line-height:1;color:var(--m-accent);transition:transform .2s;transform:rotate({{ '0' if collapsed else '90' }}deg);">▸</span>
+      <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--m-accent);"></span>
+      {% if period == 'weekly' %}WEEKLY BRIEFING{% elif period == 'catchup' %}CATCH-UP BRIEFING{% else %}MORNING BRIEFING{% endif %}
+    </span>
+    {% if brief and brief_date %}
+      <span class="u-label" style="text-transform:none;">{{ brief_date }}</span>
+    {% endif %}
+    {% if brief %}
+      {% if brief_read %}
+        <span class="u-label" style="padding:var(--m-space-1) var(--m-space-2);border-radius:var(--m-radius-pill);background:var(--m-surface-2);">READ</span>
+      {% else %}
+        {# The UNREAD pill is now the button, not just a label.
+           the researcher asked (2026-08-21) to keep the explicit click as the only
+           read signal, reaffirming his 2026-08-19 preference — so the click
+           has to be easy to find. It was one button at the BOTTOM of a long
+           brief, in a row with three others.
+           Why it matters: `read_at` is what the whole anti-repetition ladder
+           joins on. On 20 August the brief went unmarked, so cooldown, the
+           mention-block and angle rotation were all inert, and
+           `tuberculosis-outbreak` led two days running with the identical
+           'operational' angle. An unclicked button is not a cosmetic problem
+           here; it is the input the rotation runs on. #}
+        <button class="btn btn--primary btn--sm u-mono" type="button"
+                hx-post="/api/today/morning-brief/read" hx-vals='{"id": "{{ brief_id }}"}'
+                hx-target="#morning-brief" hx-swap="outerHTML"
+                title="Click when you have read this. It is the ONLY signal that the brief was delivered — tomorrow's brief uses it to put today's lead story on cooldown and to pick a fresh angle. Leave it unclicked and the same story can lead again."
+                style="letter-spacing:0.14em;border-radius:var(--m-radius-pill);border:0;text-transform:none;">
+          NEW · UNREAD — CLICK WHEN DONE
+        </button>
+      {% endif %}
+    {% endif %}
+    {% set gap_label = gap_label|default('') %}
+    <span style="margin-left:auto;display:inline-flex;border:1px solid var(--m-rule-soft);border-radius:var(--m-radius);overflow:hidden;">
+      <button type="button" hx-get="/api/partial/today/morning-brief?period=daily" hx-target="#morning-brief" hx-swap="outerHTML"
+              style="border:0;background:{% if period == 'daily' %}var(--m-accent){% else %}transparent{% endif %};color:{% if period == 'daily' %}var(--m-on-accent){% else %}var(--m-muted){% endif %};font-family:var(--m-mono);font-size:11px;letter-spacing:0.1em;padding:3px 10px;cursor:pointer;">DAILY</button>
+      <button type="button" hx-get="/api/partial/today/morning-brief?period=weekly" hx-target="#morning-brief" hx-swap="outerHTML"
+              style="border:0;border-left:1px solid var(--m-rule-soft);background:{% if period == 'weekly' %}var(--m-accent){% else %}transparent{% endif %};color:{% if period == 'weekly' %}var(--m-on-accent){% else %}var(--m-muted){% endif %};font-family:var(--m-mono);font-size:11px;letter-spacing:0.1em;padding:3px 10px;cursor:pointer;">WEEKLY</button>
+      <button type="button" hx-get="/api/partial/today/morning-brief?period=catchup" hx-target="#morning-brief" hx-swap="outerHTML"
+              style="border:0;border-left:1px solid var(--m-rule-soft);background:{% if period == 'catchup' %}var(--m-accent){% else %}transparent{% endif %};color:{% if period == 'catchup' %}var(--m-on-accent){% else %}var(--m-muted){% endif %};font-family:var(--m-mono);font-size:11px;letter-spacing:0.1em;padding:3px 10px;cursor:pointer;">CATCH UP{% if gap_label %} · {{ gap_label }}{% endif %}</button>
+    </span>
+  </h2>
+
+  {# Collapsible body — collapsed by default once read #}
+  {#- THE LEDE, always visible. A collapsed brief used to show its header and
+      nothing else, which tells the reader only that a brief exists. One
+      paragraph is enough to decide whether to open the rest, and it is the
+      paragraph the writer put first for exactly that reason. -#}
+  {#- TWO THINGS THAT MADE COLLAPSING LOOK BROKEN. Reported 2026-09-01: "why does
+      the morning briefing not collapse, when trying to do so, after having been
+      read." It always did collapse — the body's display went to none on every
+      click. What failed was the evidence that it had.
+
+      One: the button was rendered only `{% if collapsed %}` and its label came
+      from that SERVER-side flag, so it still read "read the rest" while the
+      rest was on screen. Pressing a control labelled "read the rest" and
+      watching the rest vanish reads as a broken control, not a working one. It
+      is now always present and says what it will do next.
+
+      Two: the lede is the brief's first paragraph, and here that was 135 of its
+      311 words — 272px of a 399px collapsed panel. Collapsing removed 741px and
+      left a screen still two-thirds full of prose that looks like the brief.
+
+      That was first solved by clamping the lede to three lines. Asked on
+      2026-09-04 to go further — "collapses completely... not the three lines
+      that are left" — the lede now folds away with the body. The header keeps
+      the date and the control keeps the word count, so a closed brief still
+      says what it is and how long it is. -#}
+  {#- THE GRID STARTS AT THE TOP OF THE PANEL (2026-09-14).
+      The rail was opened inside the collapsible body, so it began BELOW the
+      lede — leaving the widest gap on the panel, the one directly under the
+      period tabs, still empty. The two columns now begin together: prose and
+      lede on the left, what the brief is made of on the right, from the first
+      line down. -#}
+  {% set has_cov = coverage and (coverage.led or coverage.held or coverage.escalated) %}
+  {% set show_rail = brief and (sources or has_cov) %}
+  {#- `has-rail` must track whether the rail is SHOWN, not whether it exists.
+      `display:none` removes the rail as a grid item but not the 272px TRACK, so
+      a read, collapsed brief rendered with an empty column and a gap beside it.
+      Caught in review 2026-09-15. -#}
+  <div class="brief-cols{{ ' has-rail' if (show_rail and not collapsed) else '' }}">
+    <div class="brief-main">
+  {% if brief %}
+  <p class="brief-lede ed{% if collapsed %} is-folded{% endif %}" id="brief-lede">{{ brief.split("\n\n")[0] }}</p>
+  <button type="button" class="brief-more" id="brief-more" onclick="toggleBrief()"
+          aria-controls="morning-brief-body" aria-expanded="{{ 'false' if collapsed else 'true' }}"
+          data-words="{{ brief.split() | length }}">
+    {% if collapsed %}read the rest <span class="brief-words">{{ brief.split() | length }} words</span>
+    {%- else %}show less{% endif %}
+  </button>
+  {% endif %}
+
+  <div id="morning-brief-body" style="display:{{ 'none' if collapsed else 'block' }};margin-top:16px;">
+  {% if pending %}
+    {# Brief isn't written yet — it's generating in the background. Show a calm
+       "brewing" line that re-fetches this partial until the brief is ready, so
+       the dashboard never waits on the API to open. #}
+    <div class="ed u-row u-ed" style="gap:var(--m-space-3);font-size:var(--t-h4);max-width:720px;"
+         hx-get="/api/partial/today/morning-brief?period=daily" hx-trigger="load delay:5s" hx-target="#morning-brief" hx-swap="outerHTML">
+      <span class="u-fixed" style="width:9px;height:9px;border-radius:50%;background:var(--m-accent);box-shadow:0 0 8px 2px var(--m-accent);animation:m-brew 1.3s ease-in-out infinite;"></span>
+      Brewing your morning brief… the dashboard's ready — this fills itself in shortly.
+    </div>
+    <style>@keyframes m-brew{0%,100%{opacity:.3}50%{opacity:1}}</style>
+    {% if brief_error %}
+    <div class="u-mono" style="margin-top:var(--m-space-2);color:var(--m-alert);max-width:720px;">
+      &#9888; Brief generation failed: {{ brief_error }}
+      <button hx-post="/api/morning-brief/refresh" hx-vals='{"period":"daily"}' hx-target="#morning-brief" hx-swap="outerHTML"
+              class="btn btn--ghost btn--caps" style="margin-left:8px;font-size:var(--t-micro);padding:var(--m-space-1) var(--m-space-2);">Retry</button>
+    </div>
+    {% endif %}
+  {% elif brief_error == 'no-api-key' %}
+    <div style="max-width:720px;padding:var(--m-space-4) var(--m-space-5);background:var(--m-surface-2);border:1px solid var(--m-rule-soft);border-radius:var(--m-radius);">
+      <div class="u-row u-mb-3">
+        <span style="font-size:var(--t-h4);">&#128273;</span>
+        <span class="u-mono" style="letter-spacing:0.1em;color:var(--m-text);">API KEY NEEDED FOR AUTO-BRIEFS</span>
+      </div>
+      <div style="font-family:var(--m-display);font-size:var(--t-small);color:var(--m-muted);line-height:1.6;">
+        The morning brief generates automatically with an Anthropic API key. Without one, use the <strong>"Update with Claude"</strong> button below to write briefs on your Claude subscription instead.
+      </div>
+      <div class="u-label" style="margin-top:var(--m-space-3);line-height:1.8;">
+        To enable auto-briefs:<br>
+        1. Get a key at <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--m-accent);">console.anthropic.com</a> &rarr; API Keys &rarr; Create Key<br>
+        2. Add <code style="background:var(--m-surface-3);padding:1px 5px;border-radius:var(--m-radius);">ANTHROPIC_API_KEY=sk-ant-...</code> to <code style="background:var(--m-surface-3);padding:1px 5px;border-radius:var(--m-radius);">system/.env</code><br>
+        3. Restart the dashboard
+      </div>
+    </div>
+  {% elif brief_error %}
+    <div class="u-row u-mono" style="gap:var(--m-space-3);color:var(--m-alert);max-width:720px;">
+      <span>&#9888; {{ brief_error }}</span>
+      <button hx-post="/api/morning-brief/refresh" hx-vals='{"period":"daily"}' hx-target="#morning-brief" hx-swap="outerHTML"
+              class="btn btn--ghost btn--caps" style="font-size:var(--t-micro);padding:var(--m-space-1) var(--m-space-2);">Retry</button>
+    </div>
+  {% elif brief %}
+    {# Reading measure comes from the shared token (in ch, so it tracks the type
+       scale) rather than a fixed 760px that ignored the ≥1920px size bump. #}
+    {#- The brief's REST. The first paragraph lives outside the collapsible
+        body (see below) so a read brief still shows its opening line instead
+        of an empty panel.
+
+        There was already a collapse here — `toggleBrief()` hides
+        #morning-brief-body when a brief is marked read. A second fold was
+        added inside it on 2026-08-31 without noticing, and the two together
+        rendered nothing at all: the outer one hid the inner one, lede and all.
+        One mechanism, and it now hides the right half. -#}
+    {#- SOURCES BESIDE THE TEXT, NOT UNDER IT (2026-09-14).
+        The brief is set to a reading measure, so on any normal window there is a
+        wide empty column to its right — the period tabs sit alone up there. The
+        sources were a full-width band of pill chips UNDER the prose, which both
+        wasted that column and pushed the rest of the surface down by the height
+        of two wrapped rows.
+
+        They are now a right-hand rail: a stacked list, each source one line of
+        domain over title, separated by hairlines. A list reads better than
+        wrapped pills in a narrow column, and it turns the brief into one object
+        — text and its provenance side by side — instead of two stacked bands.
+
+        The rail drops under the prose below 1100px, where a 260px column would
+        squeeze the measure rather than use spare room. -#}
+    <div class="ed prose-measure brief-body">{{ brief.split("\n\n", 1)[1] if "\n\n" in brief else "" }}</div>
+  {% elif fallback_headlines %}
+    <div class="ed u-mb-4 u-ed" style="font-size:var(--t-body);max-width:720px;">The morning scan hasn't run yet. Here are the latest signals while the brief is written.</div>
+    <div class="u-col" style="gap:var(--m-space-1);">
+      {% for h in fallback_headlines %}
+      <div class="m-edge-left u-rule" style="display:flex;align-items:baseline;gap:var(--m-space-3);padding:var(--m-space-2) var(--m-space-2) var(--m-space-2) var(--m-space-3);position:relative;">
+        {% if h.domain %}<span class="u-label u-label--accent u-fixed" style="letter-spacing:0.08em;">{{ h.domain|upper }}</span>{% endif %}
+        {% if h.url %}<a href="{{ h.url }}" target="_blank" rel="noopener" style="font-size:var(--t-body);color:var(--m-ink);text-decoration:none;line-height:1.4;">{{ h.title }}</a>{% else %}<span style="font-size:var(--t-body);color:var(--m-ink);line-height:1.4;">{{ h.title }}</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="ed u-ed" style="font-size:var(--t-h4);max-width:720px;">
+      No brief yet today. {% if brief_mode == 'manual' %}Write it with Claude when you're ready.{% else %}It writes itself on the morning scan, or you can ask for it now.{% endif %}
+    </div>
+  {% endif %}
+
+  {#- Story-thread coverage now renders INSIDE the brief's right rail (see
+      above). Marking a brief read is what puts its stories on cooldown, so the
+      consequence of the button still has to be visible — it simply sits beside
+      the brief instead of under it. -#}
+
+    {# Action row #}
+    <div class="u-row u-row--wrap u-rule-t" style="margin-top:var(--m-space-5);padding-top:16px;">
+      {% if brief and not brief_read %}
+      <button type="button" class="btn btn--primary btn--caps u-mono"
+              hx-post="/api/today/morning-brief/read" hx-vals='{"id": "{{ brief_id }}"}' hx-target="#morning-brief" hx-swap="outerHTML"
+              title="Mark this brief read. It collapses, tomorrow's brief won't repeat the stories it led with, and you'll see at a glance whether the brief is new."
+              style="padding:var(--m-space-1) var(--m-space-3);letter-spacing:0.1em;">✓ Mark as read</button>
+      {% endif %}
+      <button type="button" class="btn btn--ghost btn--caps u-mono"
+              hx-get="/api/partial/today/morning-brief/history" hx-target="#brief-history" hx-swap="innerHTML"
+              {# Toggle the CLASS, not the inline style. #brief-history is hidden by
+                 .u-hide, which is `display:none !important` — an inline display:block
+                 loses to it, so the old inline toggle could never reveal the panel.
+                 HTMX swapped all 16 briefings in correctly; they were invisible. #}
+              onclick="document.getElementById('brief-history').classList.toggle('u-hide');"
+              style="padding:var(--m-space-1) var(--m-space-3);letter-spacing:0.1em;">Previous briefings</button>
+      {%- set claude_brief_prompt -%}
+Produce my Metis {% if period == 'weekly' %}weekly{% elif period == 'catchup' %}catch-up{% else %}daily{% endif %} brief now. Using the metis-rc tools: scan today's news and any new literature, rank by closeness to my work, write a short brief of the 5-7 most relevant items, save it with the Metis tool, then show me the brief.
+      {%- endset -%}
+      {% set brief_update_opts = [
+        {'icon': '✦', 'label': 'With Claude Desktop', 'sub': 'free · runs on your subscription, no API tokens',
+         'href': 'claude://claude.ai/new?q=' ~ (claude_brief_prompt | trim | urlencode), 'primary': true,
+         'title': 'Opens Claude Desktop with a ready prompt — no API key needed.'},
+        {'icon': '↻', 'label': 'With the API', 'sub': 'generates a fresh brief now · uses API credit',
+         'hx_post': '/api/morning-brief/refresh', 'hx_vals': '{"period": "' ~ period ~ '"}',
+         'hx_target': '#morning-brief', 'hx_swap': 'outerHTML',
+         'title': 'Generate a fresh brief via the Anthropic API.'}
+      ] %}
+      <span style="margin-left:auto;">
+        {{ update_menu('brief', brief_update_opts, label=('Generate' if brief_mode == 'manual' else 'Update'), align='right') }}
+      </span>
+    </div>
+
+    {# Previous briefings (lazy-loaded) #}
+    <div class="u-hide" id="brief-history" style="margin-top:var(--m-space-4);"></div>
+  </div>{# /#morning-brief-body #}
+    </div>{# /.brief-main #}
+    {% if show_rail %}
+    <aside class="brief-rail{% if collapsed %} is-folded{% endif %}" id="brief-rail" aria-label="Sources and running stories">
+      {% if sources %}
+        <div class="brief-rail-h">Sources from this brief</div>
+        <ul class="brief-src">
+          {% for s in sources %}
+          <li class="brief-src-i">
+            {% if s.url %}
+            <a class="brief-src-l" href="{{ s.url }}" target="_blank" rel="noopener">
+              {% if s.domain %}<span class="brief-src-d">{{ s.domain|upper }}</span>{% endif %}
+              <span class="brief-src-t">{{ s.title | clip(90) }}</span>
+            </a>
+            {% else %}
+            <span class="brief-src-l brief-src-l--plain">
+              {% if s.domain %}<span class="brief-src-d">{{ s.domain|upper }}</span>{% endif %}
+              <span class="brief-src-t">{{ s.title | clip(90) }}</span>
+            </span>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+
+        {#- RUNNING STORIES MOVED INTO THE RAIL (2026-09-14). It was a full-width
+            band under the brief, and the rail beside the text still had room —
+            so the panel was taller than it needed to be while the column next to
+            it sat empty. Same reasoning as the sources above it: what the brief
+            is MADE of, and what it is holding back, both belong beside the brief
+            rather than stacked under it. -#}
+      {% if has_cov %}
+        <div class="brief-rail-h{{ ' brief-rail-h--2' if sources else '' }}">Running stories</div>
+        {% if coverage.led %}
+        <p class="brief-cov-lead">{% if brief_read %}Quieted by this brief{% else %}Marking this read will quiet{% endif %}</p>
+        <div class="brief-cov-row">
+          {% for c in coverage.led %}<span class="brief-cov brief-cov--led">{{ c.label }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if coverage.held %}
+        <p class="brief-cov-lead">Held back today · already delivered</p>
+        <div class="brief-cov-row">
+          {% for c in coverage.held %}<span class="brief-cov">{{ c.label }}{% if c.days is not none %} · {{ c.days }}d{% endif %}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if coverage.escalated %}
+        <p class="brief-cov-lead brief-cov-lead--alert">&#9650; Broke silence — something changed</p>
+        <div class="brief-cov-row">
+          {% for c in coverage.escalated %}<span class="brief-cov brief-cov--esc">{{ c.label }}</span>{% endfor %}
+        </div>
+        {% endif %}
+      {% endif %}
+      </aside>
+      {% endif %}
+  </div>{# /.brief-cols #}
+</div>
+<script>
+function toggleBrief(){
+  var b=document.getElementById('morning-brief-body'), c=document.getElementById('brief-chevron');
+  if(!b) return;
+  var open = b.style.display !== 'none';   // state BEFORE this click
+  b.style.display = open ? 'none' : 'block';
+  if(c) c.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+
+  // Everything that tells the reader which state they are now in. Without this
+  // the control kept its opening label while open, so collapsing looked like a
+  // no-op — the change happened below the fold and nothing on screen agreed.
+  var lede = document.getElementById('brief-lede');
+  if(lede) lede.classList.toggle('is-folded', open);
+  // The rail sits OUTSIDE the collapsible body (it has to, to start level with
+  // the lede), so it does not inherit the fold and has to be told.
+  var rail = document.getElementById('brief-rail');
+  if(rail) rail.classList.toggle('is-folded', open);
+  // The grid TRACK has to go with it, or the folded brief keeps a 272px column
+  // of nothing on its right.
+  var cols = rail && rail.closest('.brief-cols');
+  if(cols) cols.classList.toggle('has-rail', !open);
+  var more = document.getElementById('brief-more');
+  if(more){
+    more.setAttribute('aria-expanded', open ? 'false' : 'true');
+    more.innerHTML = open
+      ? 'read the rest <span class="brief-words">' + (more.dataset.words || '') + ' words</span>'
+      : 'show less';
+  }
+}
+</script>
