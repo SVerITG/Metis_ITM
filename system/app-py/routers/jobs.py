@@ -120,13 +120,13 @@ async def save_scheduler_settings(request: Request):
 
 @router.post("/api/scheduler/brief-mode")
 async def save_brief_mode(request: Request):
-    """Persist brief_mode ('auto' | 'auto+manual' | 'manual') to user-preferences.json."""
+    """Persist brief_mode ('auto' | 'auto+manual' | 'manual' | 'desktop') to user-preferences.json."""
     import json, os
     from pathlib import Path
     try:
         body = await request.json()
         mode = body.get("mode", "auto")
-        if mode not in ("auto", "auto+manual", "manual"):
+        if mode not in ("auto", "auto+manual", "manual", "desktop"):
             return JSONResponse({"status": "error", "message": "Invalid mode"}, status_code=400)
         rc = os.environ.get("METIS_RC_ROOT", "")
         if not rc:
@@ -259,6 +259,7 @@ async def automation_status_partial():
                 _pill("auto", "AUTO", brief_mode)
                 + _pill("auto+manual", "AUTO+MANUAL", brief_mode)
                 + _pill("manual", "MANUAL", brief_mode)
+                + _pill("desktop", "DESKTOP", brief_mode)
             )
             rows_html += f"""
 <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--m-rule-soft);">

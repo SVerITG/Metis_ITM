@@ -1290,18 +1290,23 @@ async def api_news_summarize(request: Request):
 
 
 def _get_brief_mode() -> str:
-    """Return brief generation mode: 'auto' | 'auto+manual' | 'manual'."""
+    """Return brief generation mode: 'auto' | 'auto+manual' | 'manual' | 'desktop'.
+
+    'desktop': a Claude Desktop scheduled task writes the brief through
+    save_daily_brief; the dashboard only shows it and never calls the API."""
     try:
         import json as _json
         rc = os.environ.get("METIS_RC_ROOT", "")
         prefs_path = Path(rc) / "system" / "config" / "user-preferences.json" if rc else None
         if prefs_path and prefs_path.exists():
-            mode = _json.loads(prefs_path.read_text()).get("brief_mode", "auto")
-            if mode in ("auto", "auto+manual", "manual"):
+            mode = _json.loads(prefs_path.read_text()).get("brief_mode", "")
+            if mode in ("auto", "auto+manual", "manual", "desktop"):
                 return mode
     except Exception:
         pass
-    return "auto"
+    # Unset: without a key the dashboard cannot write a brief, so wait for the
+    # Claude Desktop morning task instead of failing on every page load.
+    return "auto" if _get_api_key() else "desktop"
 
 
 def _get_api_key() -> str:
@@ -1984,9 +1989,15 @@ async def today_morning_brief(request: Request):
     ai_brief = None
     brief_date_label = None
     pending = False
+    brief_mode = _get_brief_mode()
+    # The dashboard writes briefs itself only when it is meant to. In 'manual'
+    # and 'desktop' mode a missing brief is waited for, never generated: an
+    # exhausted API balance used to turn every page load into a failure.
+    self_writes = brief_mode not in ("manual", "desktop")
     if period in ("weekly", "catchup"):
         try:
-            ai_brief = _get_or_generate_brief(period=period)
+            ai_brief = (_get_or_generate_brief(period=period) if self_writes
+                        else _get_cached_brief(period))
         except Exception:
             pass
     else:
@@ -1998,7 +2009,7 @@ async def today_morning_brief(request: Request):
             ai_brief = _get_cached_brief("daily")
         except Exception:
             ai_brief = None
-        if (not ai_brief and _get_brief_mode() != "manual"
+        if (not ai_brief and self_writes
                 and os.environ.get("METIS_DEMO") != "1"):
             # Kick generation in the background, but no more than once every ~90s,
             # so a transient failure self-heals on the next poll without hammering
@@ -2016,7 +2027,7 @@ async def today_morning_brief(request: Request):
     if ai_brief:
         _brief_last_error.pop(period, None)
     brief_error = ""
-    if pending and not _get_api_key() and _get_brief_mode() != "manual":
+    if pending and not _get_api_key():
         brief_error = "no-api-key"  # sentinel — template shows setup guidance
         pending = False  # stop the polling spinner — it won't resolve without a key
     elif _brief_last_error.get(period):
@@ -2084,7 +2095,10 @@ async def today_morning_brief(request: Request):
             "fallback_headlines": fallback_headlines,
             "open_threads": open_threads,
             "time_of_day": time_of_day,
-            "brief_mode": _get_brief_mode(),
+            "brief_mode": brief_mode,
+            # Desktop mode, and today's brief has not arrived: say so, and how
+            # to fetch it, above whatever earlier brief is shown meanwhile.
+            "desktop_waiting": brief_mode == "desktop" and bool(brief_date_label or not ai_brief),
             "period": period,
             "brief_id": _bid,
             "brief_date": _bdate,

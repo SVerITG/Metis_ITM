@@ -1386,6 +1386,8 @@ a.board-item-title:hover { color: var(--m-accent); }
 }
 .brief-words { color: var(--m-muted); margin-left: auto; }
 .brief-more:hover { text-decoration: underline; }
+/* Desktop mode: today's brief is written by a Claude Desktop scheduled task. */
+.brief-desktop-note { max-width: 720px; line-height: 1.6; }
 .brief-more:focus-visible { outline: 2px solid var(--m-accent); outline-offset: 3px; }
 .brief-body { line-height: 1.7; color: var(--m-ink); white-space: pre-wrap; }
 

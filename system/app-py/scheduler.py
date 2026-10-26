@@ -978,6 +978,10 @@ def job_brief_synthesis() -> None:
         _prefs_path = Path(_rc) / "system" / "config" / "user-preferences.json" if _rc else None
         if _prefs_path and _prefs_path.exists():
             _mode = _json.loads(_prefs_path.read_text()).get("brief_mode", "auto")
+            if _mode == "desktop":
+                _log_job("brief_synthesis", "skip", "Claude Desktop writes the brief on its schedule")
+                log.info("[scheduler] brief_synthesis skipped (desktop mode)")
+                return
             if _mode == "manual":
                 _log_job("brief_synthesis", "skip", "Manual mode — generate from the Today tab when ready")
                 log.info("[scheduler] brief_synthesis skipped (manual mode)")
