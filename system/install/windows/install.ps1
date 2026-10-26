@@ -39,6 +39,10 @@
     are applied here, before the first self-check, so that check sees a profile.
 .PARAMETER LoadDemo
     Load the example workspace (only into a workspace that is still empty).
+.PARAMETER MorningBriefing
+    HH:MM to have Claude Desktop write the morning briefing every weekday at
+    that time (a Desktop scheduled task), or "off". Empty, as on an update:
+    keep what was chosen before.
 
 .NOTES
     Exit code 0 = installed (possibly with warnings), 1 = not installed. The
@@ -54,7 +58,8 @@ param(
     [switch]$LoadDemo,
     [string]$InstallDir    = "",
     [string]$ApiKey        = "",
-    [string]$WizardAnswers = ""
+    [string]$WizardAnswers = "",
+    [string]$MorningBriefing = ""
 )
 
 Set-StrictMode -Version Latest
@@ -520,6 +525,24 @@ if ((Invoke-Logged $venvPy @($register, "--all-installed", "--python", $venvPy, 
 }
 else {
     Write-Warn "Claude Desktop's settings file could not be read, so it was left alone. See the log."
+}
+
+# ── The morning briefing: a Claude Desktop scheduled task ───────────────────
+# The standard way the briefing is written, on the person's own subscription.
+# Without a signed-in Claude Desktop the task cannot be registered yet; the
+# daily self-check finishes it ("morning_briefing" in essentials.json).
+$schedule = Join-Path $InstallDir "system\install\register_schedule.py"
+if ($MorningBriefing -eq "off") {
+    Invoke-Logged $venvPy @($schedule, "--remove") | Out-Null
+}
+elseif ($MorningBriefing -or (Test-Path (Join-Path $env:USERPROFILE ".claude\scheduled-tasks\metis-morning-briefing"))) {
+    Write-Step "Setting up the morning briefing in Claude Desktop"
+    $schedArgs = @($schedule, "--root", $InstallDir)
+    if ($MorningBriefing) { $schedArgs += @("--time", $MorningBriefing) }
+    if ((Invoke-Logged $venvPy $schedArgs) -eq 0) {
+        Write-OK "Claude Desktop will write your briefing every weekday (Claude Desktop -> Scheduled)"
+    }
+    else { Write-Warn "The morning briefing could not be scheduled; the self-check will try again." }
 }
 
 # ── Connect Claude Code (if installed) ───────────────────────────────────────

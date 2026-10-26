@@ -131,6 +131,7 @@ Source: "{#RepoRoot}\system\config\constitution.md";     DestDir: "{app}\system\
 Source: "{#RepoRoot}\system\config\red-lines.md";        DestDir: "{app}\system\config"; Flags: ignoreversion
 Source: "{#RepoRoot}\system\config\token-guardrails.md"; DestDir: "{app}\system\config"; Flags: ignoreversion
 Source: "{#RepoRoot}\system\config\first-run-wizard.md"; DestDir: "{app}\system\config"; Flags: ignoreversion
+Source: "{#RepoRoot}\system\config\scheduled\morning-briefing.md"; DestDir: "{app}\system\config\scheduled"; Flags: ignoreversion
 Source: "{#RepoRoot}\system\config\tool-subsets.json";   DestDir: "{app}\system\config"; Flags: ignoreversion skipifsourcedoesntexist
 ; An edition's settings and its institution pack (templates, procedures).
 ; Absent in the full build, so both are skipped there.
@@ -170,6 +171,7 @@ Source: "..\dist\MetisTray.exe";         DestDir: "{app}\system\install\windows"
 Source: "..\vendor_download.py";         DestDir: "{app}\system\install";         Flags: ignoreversion
 Source: "..\config_merger.py";           DestDir: "{app}\system\install";         Flags: ignoreversion
 Source: "..\register_desktop.py";        DestDir: "{app}\system\install";         Flags: ignoreversion
+Source: "..\register_schedule.py";       DestDir: "{app}\system\install";         Flags: ignoreversion
 Source: "..\metis_verify.py";            DestDir: "{app}\system\install";         Flags: ignoreversion
 Source: "..\essentials.json";            DestDir: "{app}\system\install";         Flags: ignoreversion
 ; Demo/seed content. Gitignored, so it is absent from a clean clone and the
@@ -247,6 +249,10 @@ Filename: "{localappdata}\Metis\venv\Scripts\python.exe"; \
 Filename: "{app}\system\mcp-server\.venv-win\Scripts\python.exe"; \
   Parameters: """{app}\system\install\register_desktop.py"" --remove"; \
   Flags: runhidden skipifdoesntexist; RunOnceId: "RemoveMetisFromClaudeDesktopOld"
+; And the morning-briefing task from Claude Desktop, leaving every other task.
+Filename: "{localappdata}\Metis\venv\Scripts\python.exe"; \
+  Parameters: """{app}\system\install\register_schedule.py"" --remove"; \
+  Flags: runhidden skipifdoesntexist; RunOnceId: "RemoveMetisMorningBriefing"
 
 [UninstallDelete]
 ; The program files only. The database (in .local\share\metis) and the
@@ -277,6 +283,7 @@ var
   McpConsentPage: TInputOptionWizardPage;
   DemoPage:       TInputOptionWizardPage;
   ApiKeyPage:     TInputQueryWizardPage;
+  BriefPage:      TInputOptionWizardPage;
   AboutPage:      TInputQueryWizardPage;
   ResearchPage:   TInputQueryWizardPage;
   StylePage:      TInputOptionWizardPage;
@@ -633,10 +640,31 @@ begin
   ApiKeyPage.Add('Paste your Anthropic API key here:', False);
 
   { ═══════════════════════════════════════════════════════════════════════
+    PAGE 3b — MORNING BRIEFING
+    ═══════════════════════════════════════════════════════════════════════ }
+  { The standard way the briefing is written: a Claude Desktop scheduled task,
+    on the person's own subscription. register_schedule.py creates it; when
+    Claude Desktop has not been signed in to yet, the daily self-check
+    finishes the job later. An API key is an alternative, not a requirement. }
+  BriefPage := CreateInputOptionPage(
+    ApiKeyPage.ID,
+    'Morning Briefing',
+    'Have Claude write you a short briefing every working day?',
+    'Each weekday morning Claude Desktop reads what is new for you — tasks, news,' + #13#10 +
+    'new papers — and leaves a short briefing on your Metis dashboard. It uses your' + #13#10 +
+    'Claude subscription; no API key is needed. Claude Desktop must be open then.' + #13#10 +
+    'Change the time or switch it off later in Claude Desktop -> Scheduled.',
+    True, False);
+  BriefPage.Add('Yes — every weekday at 08:30  (recommended)');
+  BriefPage.Add('Yes — every weekday at 07:30');
+  BriefPage.Add('No  — I will ask for a briefing myself');
+  BriefPage.SelectedValueIndex := 0;
+
+  { ═══════════════════════════════════════════════════════════════════════
     PAGE 4 — ABOUT YOU
     ═══════════════════════════════════════════════════════════════════════ }
   AboutPage := CreateInputQueryPage(
-    ApiKeyPage.ID,
+    BriefPage.ID,
     'About You',
     'Help Metis get to know you — this takes about 1 minute.',
     'Metis uses this to address you by name, calibrate how it communicates,' + #13#10 +
@@ -799,7 +827,7 @@ begin
 #endif
   if not ExistingInstall then Exit;
   Result := (PageID = McpConsentPage.ID) or (PageID = DemoPage.ID)
-         or (PageID = ApiKeyPage.ID) or (PageID = AboutPage.ID)
+         or (PageID = ApiKeyPage.ID) or (PageID = BriefPage.ID) or (PageID = AboutPage.ID)
          or (PageID = ResearchPage.ID) or (PageID = StylePage.ID)
          or (PageID = ProjectsPage.ID);
 end;
@@ -841,6 +869,14 @@ begin
   if AnswersFile <> '' then Params := Params + ' -WizardAnswers "' + AnswersFile + '"';
   if LoadDemo then Params := Params + ' -LoadDemo';
   if GetApiKey('') <> '' then Params := Params + ' -ApiKey "' + GetApiKey('') + '"';
+  { An update skipped the page: install.ps1 then keeps whatever was chosen before. }
+  if not IsUpdate then
+    case BriefPage.SelectedValueIndex of
+      0: Params := Params + ' -MorningBriefing 08:30';
+      1: Params := Params + ' -MorningBriefing 07:30';
+    else
+      Params := Params + ' -MorningBriefing off';
+    end;
 
   WizardForm.StatusLabel.Caption := 'Installing Metis…';
   WizardForm.ProgressGauge.Style := npbstMarquee;

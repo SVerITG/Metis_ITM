@@ -1304,9 +1304,9 @@ def _get_brief_mode() -> str:
                 return mode
     except Exception:
         pass
-    # Unset: without a key the dashboard cannot write a brief, so wait for the
-    # Claude Desktop morning task instead of failing on every page load.
-    return "auto" if _get_api_key() else "desktop"
+    # Unset: the standard is the Claude Desktop morning task, which setup
+    # creates. Writing it here with an API key is an option chosen in Settings.
+    return "desktop"
 
 
 def _get_api_key() -> str:

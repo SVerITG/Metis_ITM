@@ -200,12 +200,12 @@ async def automation_status_partial():
     saved = _load_job_settings()
 
     # Load brief_mode from user-preferences
-    brief_mode = "auto"
+    brief_mode = "desktop"
     try:
         rc = os.environ.get("METIS_RC_ROOT", "")
         prefs_path = Path(rc) / "system" / "config" / "user-preferences.json" if rc else None
         if prefs_path and prefs_path.exists():
-            brief_mode = json.loads(prefs_path.read_text()).get("brief_mode", "auto")
+            brief_mode = json.loads(prefs_path.read_text()).get("brief_mode", "desktop")
     except Exception:
         pass
 

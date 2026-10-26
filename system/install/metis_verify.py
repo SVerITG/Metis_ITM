@@ -654,6 +654,28 @@ def _fix_task_selfcheck():
     return "scheduled" if p.returncode == 0 else "could not be scheduled"
 
 
+@check("morning_briefing")
+def _morning_briefing():
+    import register_schedule as sched
+    if SYSTEM != "windows":
+        return SKIP, "Claude Desktop's scheduled tasks are set up from Windows"
+    st = sched.status()
+    if st == "off":
+        return SKIP, "switched off in setup"
+    if st == "registered":
+        return PASS, ""
+    return PROBLEM, "Claude Desktop has not got the task yet (it needs to be signed in once)"
+
+
+@repair("morning_briefing")
+def _fix_morning_briefing():
+    import register_schedule as sched
+    if SANDBOX:
+        return "not attempted (test run)"
+    st, _ = sched.register(ROOT)
+    return "scheduled in Claude Desktop" if st == "registered" else "Claude Desktop is not signed in yet"
+
+
 @check("task_dashboard")
 def _task_dashboard():
     return _windows_task("Metis dashboard")
