@@ -65,6 +65,16 @@ app = FastMCP(
         "`metis-schedule-morning` prompt — Claude Desktop runs it as a scheduled task). "
         "If they only want to ask something, answer it first and offer the setup "
         "afterwards — never block a question on it.\n\n"
+        "## Data work: data-protected mode\n"
+        "Whenever a request involves the researcher's data — a new analysis, an R "
+        "script, a figure, a map, a dashboard panel, cleaning, merging, a variable, "
+        "'what do I have on X' — call `data_memory(question=...)` FIRST. Metis has "
+        "learnt their files, columns, values, derived variables, existing scripts and "
+        "the stories behind the data from their own code and notes. Then write an R "
+        "script (in their style, from the closest existing script, with the paths "
+        "exactly as returned) that they run on their own computer. Never open, "
+        "preview or summarise a data file and never ask for rows. When they explain "
+        "a dataset, keep it with `record_data_story(target=..., story=...)`.\n\n"
         "## Keeping Metis current\n"
         "If the person asks to update Metis, or a self-check says a newer version is "
         "available, use `update_metis` (the `metis-new-version` prompt): report the "
@@ -192,6 +202,7 @@ _MODULE_AGENT: dict[str, str] = {
     "memory_gateway":     "Memory Curator",
     # Data Analyst
     "data_tools":         "Data Analyst",
+    "data_memory":        "Data Analyst",
     # Software Engineer
     "script_analyzer":    "Software Engineer",
     "code_repository":    "Software Engineer",

@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from routers import (
     api_v1,
+    data_page,
     capture,
     connections,
     jobs,
@@ -710,6 +711,7 @@ app.include_router(transcription.router)
 app.include_router(speakers.router)
 app.include_router(jobs.router)
 app.include_router(setup.router)
+app.include_router(data_page.router)   # the Data Memory surface
 # The citation checker's HTTP surface — the Stop hook calls this rather than
 # shelling out to Python, so a per-turn check costs milliseconds against an
 # already-warm process instead of an interpreter start on every reply.

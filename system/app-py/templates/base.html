@@ -371,6 +371,27 @@
         <span class="n-tip">Library</span>
       </div>
 
+      <!-- 10 Data — the Data Memory: datasets learnt from code. Core in every edition. -->
+      <div class="nav-item {% if active_tab == 'data' %}active{% endif %}"
+           data-tab="data"
+           hx-get="/api/tab/data"
+           hx-target="#tab-content"
+           hx-swap="outerHTML"
+           hx-select="#tab-content"
+           hx-disinherit="*"
+           hx-push-url="/data"
+           onclick="setNavActive(this,'data')"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+        <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+          <ellipse cx="8" cy="3.8" rx="5" ry="1.8"/>
+          <path d="M3 3.8 V 12.2 C 3 13.2, 5.2 14, 8 14 C 10.8 14, 13 13.2, 13 12.2 V 3.8"/>
+          <path d="M3 8 C 3 9, 5.2 9.8, 8 9.8 C 10.8 9.8, 13 9, 13 8"/>
+        </svg>
+        <span class="n-label">Data</span>
+        <span class="n-tip">Data — what Metis knows from your scripts</span>
+      </div>
+
     </div><!-- /.nav-sec surfaces -->
 
     {# ── Focus shelf ─────────────────────────────────────────────────────────

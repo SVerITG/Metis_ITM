@@ -44,6 +44,9 @@ TOOL_MODULES = [
     "paperqa_search", "voice_capture", "knowledge_db", "background_packs", "decisions_ledger", "office", "session_memory",
     "memory_curator", "memory_gateway", "research", "research_timeline", "project_tracker", "dhis2",
     "discovery", "code_repository", "script_analyzer", "tool_search", "prompts",
+    # DATA MEMORY — the data-protected analysis mode: files, columns, values and
+    # stories learnt from the researcher's code, never from the data itself.
+    "data_memory",
     # ACCOUNTS — which account (work/personal) each project pushes and publishes to.
     "accounts",
     # MCP RESOURCES — the third protocol primitive, unused until 2026-08-21.
